@@ -5,6 +5,7 @@ import { ArrowLeft, Check, Copy, Download, Film, Link2, LoaderCircle, RefreshCw,
 import type { SourceRecord } from "@/lib/sources/store";
 import type { Highlight } from "@/lib/highlights/discover";
 import type { ReelView } from "@/lib/podcast/batch";
+import { settle } from "@/lib/client/http";
 
 type PublicHighlight = Omit<Highlight, "features">;
 type Discovery = { selected: PublicHighlight[]; pool: PublicHighlight[]; notice?: string; rankedBy: "heuristic" | "qwen"; model?: string; modelLatencyMs: number; fallbackReason?: string };
@@ -76,7 +77,7 @@ export function PodcastStudio() {
     void (async () => {
       const params = new URLSearchParams(location.search);
       const saved = params.get("session");
-      if (saved && /^[a-f0-9-]{36}$/i.test(saved) && (await fetch(`/api/sources?sessionId=${saved}`)).ok) {
+      if (saved && /^[a-f0-9-]{36}$/i.test(saved) && (await settle(await fetch(`/api/sources?sessionId=${saved}`))).ok) {
         setSessionId(saved);
         try {
           const batchId = params.get("batch"), sourceId = params.get("source");
