@@ -8,7 +8,7 @@
     "start": "node scripts/serve.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/creative/challenges.test.ts src/lib/camera/capabilities.test.ts src/lib/ai/studio.test.ts src/lib/video/shot-analysis.test.ts src/lib/creative/timeline.test.ts src/lib/edit/edl.test.ts src/lib/video/ass.test.ts tests/server/upload-validation.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
+    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/creative/challenges.test.ts src/lib/camera/capabilities.test.ts src/lib/ai/studio.test.ts src/lib/video/shot-analysis.test.ts src/lib/creative/timeline.test.ts src/lib/edit/edl.test.ts src/lib/video/ass.test.ts tests/server/upload-validation.test.ts tests/server/creative-provider.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
     "generate:audio": "tsx scripts/generate-audio.ts",
     "verify:remix": "tsx --test tests/server/remix.test.ts",
     "verify:finishing": "tsx scripts/verify-finishing-render.ts",
@@ -20,7 +20,8 @@
     "verify:browser": "playwright test",
     "generate:previews": "tsx scripts/generate-previews.ts",
     "verify:aesthetics": "tsx scripts/verify-aesthetics.ts",
-    "fixtures:fetch": "tsx scripts/fetch-fixtures.ts"
+    "fixtures:fetch": "tsx scripts/fetch-fixtures.ts",
+    "verify:qwen": "tsx scripts/verify-qwen.ts"
   },
   "engines": {
     "node": ">=20.9"
