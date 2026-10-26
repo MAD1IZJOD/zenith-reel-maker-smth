@@ -8,7 +8,7 @@
     "start": "node scripts/serve.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/creative/challenges.test.ts src/lib/camera/capabilities.test.ts src/lib/ai/studio.test.ts src/lib/video/shot-analysis.test.ts src/lib/creative/timeline.test.ts src/lib/edit/edl.test.ts src/lib/video/ass.test.ts tests/server/upload-validation.test.ts tests/server/creative-provider.test.ts tests/server/sources.test.ts tests/server/highlights.test.ts tests/server/higgsfield.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
+    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/creative/challenges.test.ts src/lib/camera/capabilities.test.ts src/lib/ai/studio.test.ts src/lib/video/shot-analysis.test.ts src/lib/creative/timeline.test.ts src/lib/edit/edl.test.ts src/lib/video/ass.test.ts tests/server/upload-validation.test.ts tests/server/creative-provider.test.ts tests/server/sources.test.ts tests/server/highlights.test.ts tests/server/discovery.test.ts tests/server/higgsfield.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
     "generate:audio": "tsx scripts/generate-audio.ts",
     "verify:remix": "tsx --test tests/server/remix.test.ts",
     "verify:finishing": "tsx scripts/verify-finishing-render.ts",
@@ -26,7 +26,8 @@
     "verify:highlights": "tsx scripts/verify-highlight-render.ts",
     "verify:speech": "tsx scripts/verify-speech-captions.ts",
     "benchmark:render": "tsx scripts/benchmark-render.ts",
-    "verify:url-ingest": "tsx scripts/verify-url-ingest.ts"
+    "verify:url-ingest": "tsx scripts/verify-url-ingest.ts",
+    "verify:discovery": "tsx scripts/verify-discovery.ts"
   },
   "engines": {
     "node": ">=20.9"

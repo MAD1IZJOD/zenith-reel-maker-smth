@@ -39,7 +39,8 @@ export function sentenceUnits(transcript: Transcript): Unit[] {
   const flush = () => { if (current.length) units.push({ start: current[0].start, end: current[current.length - 1].end, text: current.map((word) => word.text).join(" ").replace(/\s+([,.!?;:])/g, "$1"), words: current }); current = []; };
   for (const segment of transcript.segments) for (const word of segment.words || []) {
     const previous = current[current.length - 1];
-    if (previous && word.start - previous.end > 1.2) flush();
+    // A long pause ends a unit only when the next word plausibly starts a new sentence; otherwise fragments appear.
+    if (previous && word.start - previous.end > 1.5 && /^[A-Z"“'‘]/.test(word.text.trim())) flush();
     current.push(word);
     if (TERMINAL.test(word.text.trim())) flush();
   }
