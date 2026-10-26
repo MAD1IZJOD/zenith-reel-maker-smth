@@ -31,7 +31,8 @@
     "verify:podcast": "tsx scripts/verify-podcast.ts",
     "verify:faceless": "tsx scripts/verify-faceless.ts",
     "verify:feature-gate": "node scripts/verify-feature-gate.mjs",
-    "verify:lan-phone": "node scripts/verify-lan-phone.mjs"
+    "verify:lan-phone": "node scripts/verify-lan-phone.mjs",
+    "verify:concurrency": "node scripts/verify-concurrency.mjs"
   },
   "engines": {
     "node": ">=20.9"
