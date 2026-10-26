@@ -9,7 +9,7 @@ export async function GET(request: Request, context: { params: Promise<{ token: 
   try {
     rateLimit(`retrieve:${networkKey(request)}`, 240);
     const { token } = await context.params; const { job, record } = await resolveRetrieval(token);
-    if (new URL(request.url).searchParams.has("media")) return await serveMedia(request, path.join(sessionDirectory(job.sessionId), `reel-${job.id}.mp4`), "video/mp4", `squad-reel-${job.presetId}.mp4`);
+    if (new URL(request.url).searchParams.has("media")) return await serveMedia(request, path.join(sessionDirectory(job.sessionId), `reel-${job.id}.mp4`), "video/mp4", `zenith-reel-${job.presetId}.mp4`);
     return NextResponse.json({ title: job.title, presetId: job.presetId, expiresAt: record.expiresAt, mediaUrl: `/api/retrieval/${token}?media=1` });
   } catch (error) { return errorResponse(error); }
 }

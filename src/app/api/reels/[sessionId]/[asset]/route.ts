@@ -12,6 +12,6 @@ export async function GET(request: Request, context: { params: Promise<{ session
     const file = path.join(sessionDirectory(sessionId), asset);
     const metadata = asset.startsWith("shot-") ? await probeVideo(file) : undefined;
     const mime = asset.endsWith(".jpg") ? "image/jpeg" : metadata?.formatName.includes("webm") || metadata?.formatName.includes("matroska") ? "video/webm" : "video/mp4";
-    return await serveMedia(request, file, mime, asset.startsWith("shot-") ? asset : `squad-${asset}`);
+    return await serveMedia(request, file, mime, asset.startsWith("shot-") ? asset : `zenith-${asset}`);
   } catch (error) { return errorResponse(error, "Media is unavailable or expired."); }
 }

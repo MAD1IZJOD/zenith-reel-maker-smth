@@ -1,4 +1,4 @@
-# Squad Reel Studio
+# Zenith Agentic Reel Maker
 
 A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical 720 × 1280 H.264/AAC MP4. Regenerate from the same footage without recording again.
 

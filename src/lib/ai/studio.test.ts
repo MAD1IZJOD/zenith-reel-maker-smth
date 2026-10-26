@@ -15,5 +15,5 @@ test("hook options are concise and do not require an external provider", () => {
   const assist = createStudioAssist(getPreset("squad-montage")!, { vibe: "energetic" });
   assert.equal(assist.hookOptions.length, 3);
   assert.ok(assist.hookOptions.every((hook) => hook.length <= 52));
-  assert.match(assist.postCaption, /#SquadReelStudio/);
+  assert.match(assist.postCaption, /#ZenithReel/);
 });

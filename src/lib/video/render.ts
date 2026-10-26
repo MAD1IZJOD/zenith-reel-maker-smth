@@ -70,7 +70,7 @@ export async function renderReel({ sessionId, presetId, title, hook, captions, c
   const offsetTwo = preset.clipSeconds * 2 - transitionDuration * 2;
   const chosenTitle = escapePath(titleFile);
   const chosenHook = escapePath(hookFile);
-  const label = preset.effect === "retro" ? "REC  •  10.26.2026" : preset.effect === "trailer" ? "SQUAD REEL STUDIO PRESENTS" : preset.eyebrow.toUpperCase();
+  const label = preset.effect === "retro" ? "REC  •  10.26.2026" : preset.effect === "trailer" ? "ZENITH AGENTIC REEL MAKER PRESENTS" : preset.eyebrow.toUpperCase();
   const overlay = `drawtext=fontfile='${font}':textfile='${chosenTitle}':expansion=none:fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.10:box=1:boxcolor=black@0.38:boxborderw=16,drawtext=fontfile='${font}':textfile='${chosenHook}':expansion=none:fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=22:x=(w-text_w)/2:y=h*0.18:box=1:boxcolor=black@0.28:boxborderw=8,drawtext=fontfile='${font}':text='${escapeText(label)}':fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=20:x=(w-text_w)/2:y=h*0.88`;
   const output = path.join(directory, outputName || "reel.mp4");
   const renderWithTransition = (transition: ReelPreset["transition"]) => {

@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Squad Reel Studio",
-  description: "Turn three real shots into a festival-ready reel.",
+  title: "ZENITH AGENTIC REEL MAKER",
+  description: "Three shots. Infinite stories. Record three moments. Direct five creative agents. Make something worth sharing.",
+  applicationName: "Zenith Agentic Reel Maker",
+  openGraph: { title: "ZENITH AGENTIC REEL MAKER", description: "Your AI film crew. Your story. Five deterministic creative tools. Seven real reel styles.", type: "website" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

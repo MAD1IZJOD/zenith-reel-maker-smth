@@ -61,6 +61,6 @@ export function createStudioAssist(preset: ReelPreset, input: DirectorInput = {}
     hookOptions,
     captions: [...preset.captions],
     cover: { title: preset.title, frame: "first-second" },
-    postCaption: `${preset.name} made in three shots. #SquadReelStudio`,
+    postCaption: `${preset.name} made in three shots. #ZenithReel`,
   };
 }
