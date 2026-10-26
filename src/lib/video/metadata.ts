@@ -1,11 +1,11 @@
 import { ffprobe, runProcess } from "./process";
 import { limit } from "@/lib/server/config";
 
-export type VideoMetadata = { duration: number; formatName: string; width: number; height: number; codecName: string; hasAudio: boolean };
+export type VideoMetadata = { duration: number; formatName: string; width: number; height: number; codecName: string; hasAudio: boolean; rotation?: number };
 
 export async function probeVideo(file: string, allowUnknownDuration = false): Promise<VideoMetadata> {
-  const output = await runProcess(ffprobe(), ["-v", "error", "-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height", "-of", "json", file], "FFprobe");
-  const json = JSON.parse(output) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; codec_name?: string; width?: number; height?: number }[] };
+  const output = await runProcess(ffprobe(), ["-v", "error", "-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height:stream_side_data=rotation", "-of", "json", file], "FFprobe");
+  const json = JSON.parse(output) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; codec_name?: string; width?: number; height?: number; side_data_list?: { rotation?: number }[] }[] };
   const stream = json.streams?.find((entry) => entry.codec_type === "video");
   const duration = Number(json.format?.duration);
   const maxDuration = limit("MAX_CLIP_DURATION", 90, 180);
@@ -17,5 +17,6 @@ export async function probeVideo(file: string, allowUnknownDuration = false): Pr
     height: stream.height,
     codecName: stream.codec_name || "unknown",
     hasAudio: json.streams?.some((entry) => entry.codec_type === "audio") || false,
+    rotation: stream.side_data_list?.find((data) => Number.isFinite(data.rotation))?.rotation || 0,
   };
 }

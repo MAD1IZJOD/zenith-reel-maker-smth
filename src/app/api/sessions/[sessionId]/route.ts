@@ -3,12 +3,16 @@ import { parseCreativeOptions, type CreativeOptions } from "@/lib/creative/optio
 import { PRESETS } from "@/lib/presets";
 import { assertSessionId, readSessionDraft, writeSessionDraft } from "@/lib/storage/session-storage";
 import { errorResponse, requireSession } from "@/lib/server/security";
+import { readJson } from "@/lib/server/store";
+import { sessionDirectory } from "@/lib/storage/session-storage";
+import type { ShotAnalysis } from "@/lib/video/shot-analysis-types";
+import path from "node:path";
 
 export const runtime = "nodejs";
 const screens = new Set(["welcome", "presets", "director", "record", "review", "customize", "processing", "preview"]);
 const stages = new Set(["queued", "validating", "preparing", "rendering", "finalizing", "completed", "failed"]);
 
-type DraftShot = { previewUrl: string; duration: number; name: string } | null;
+type DraftShot = { previewUrl: string; duration: number; name: string; analysis?: ShotAnalysis } | null;
 type DraftJob = { id: string; presetId?: string; challengeId?: string; stage: string; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics?: { queueWaitMs?: number; renderDurationMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number } };
 type SessionDraft = { presetId: string; title: string; creative: CreativeOptions; shots: DraftShot[]; activeShot: number; challenge?: string; screen: string; advancedGuidance: boolean; job?: DraftJob; renders: DraftJob[]; selectedCoverUrl?: string; achievements: string[]; publicDisplay: boolean; promoReuse: boolean };
 
@@ -77,6 +81,7 @@ export async function GET(request: Request, context: { params: Promise<{ session
     const sessionId = assertSessionId((await context.params).sessionId);
     await requireSession(request, sessionId);
     const draft = await readSessionDraft<SessionDraft>(sessionId);
+    if (draft) draft.shots = await Promise.all(draft.shots.map(async (shot, index) => shot ? { ...shot, analysis: await readJson<ShotAnalysis>(path.join(sessionDirectory(sessionId), `shot-${index + 1}-analysis.json`)) } : null));
     return draft ? NextResponse.json({ draft }) : NextResponse.json({ error: "No saved session." }, { status: 404 });
   } catch (error) { return errorResponse(error); }
 }

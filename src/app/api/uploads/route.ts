@@ -6,7 +6,8 @@ import { assertSessionId, ensureSession } from "@/lib/storage/session-storage";
 import { probeVideo } from "@/lib/video/metadata";
 import { ffmpeg, runProcess } from "@/lib/video/process";
 import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from "@/lib/server/security";
-import { exclusive } from "@/lib/server/store";
+import { exclusive, writeJson } from "@/lib/server/store";
+import { analyzeShot } from "@/lib/video/shot-analysis";
 import { limit } from "@/lib/server/config";
 import { countSafely } from "@/lib/festival/metrics";
 
@@ -47,9 +48,11 @@ export async function POST(request: Request) {
         // Decode and normalize before publishing a preview: correct autorotation, aspect ratio and mobile playback.
         await runProcess(ffmpeg(), ["-y", "-v", "error", "-xerror", "-threads", "2", "-i", temporary, "-t", String(limit("MAX_CLIP_DURATION", 90, 180) + 1), "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1", "-filter_threads", "1", "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2", "-ar", "48000", "-movflags", "+faststart", normalized], "Upload normalization", 180_000);
         const outputMetadata = await probeVideo(normalized).catch(() => { throw mediaLimitError(); });
+        const analysis = await analyzeShot(temporary, { ...metadata, duration: outputMetadata.duration });
         await rename(normalized, path.join(directory, `shot-${shot}.mp4`));
+        await writeJson(path.join(directory, `shot-${shot}-analysis.json`), analysis);
         countSafely("clip_saved");
-        return NextResponse.json({ shot, metadata: outputMetadata, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4?v=${randomUUID()}` });
+        return NextResponse.json({ shot, metadata: outputMetadata, analysis, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4?v=${randomUUID()}` });
       } finally { await Promise.all([temporary, normalized].map((file) => rm(file, { force: true }))); }
     });
   } catch (error) { return errorResponse(error, "This video could not be decoded. Try another clip, or record it again."); }
@@ -61,7 +64,7 @@ export async function DELETE(request: Request) {
     await requireSession(request, sessionId);
     const shot = Number(url.searchParams.get("shot"));
     if (!Number.isInteger(shot) || shot < 1 || shot > 3) throw new HttpError(400, "Shot must be 1, 2, or 3.");
-    await exclusive(`session:${sessionId}`, async () => { const directory = await ensureSession(sessionId); await rm(path.join(directory, `shot-${shot}.mp4`), { force: true }); });
+    await exclusive(`session:${sessionId}`, async () => { const directory = await ensureSession(sessionId); await Promise.all([`shot-${shot}.mp4`, `shot-${shot}-analysis.json`].map((file) => rm(path.join(directory, file), { force: true }))); });
     return NextResponse.json({ cleared: true, shot });
   } catch (error) { return errorResponse(error, "Could not clear shot."); }
 }

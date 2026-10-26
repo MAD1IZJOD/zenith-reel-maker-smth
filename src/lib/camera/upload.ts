@@ -1,4 +1,5 @@
-export function uploadClip(form: FormData, progress: (value: number) => void): Promise<{ previewUrl: string; metadata: { duration: number } }> {
+import type { ShotAnalysis } from "@/lib/video/shot-analysis-types";
+export function uploadClip(form: FormData, progress: (value: number) => void): Promise<{ previewUrl: string; metadata: { duration: number }; analysis: ShotAnalysis }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest(); xhr.open("POST", "/api/uploads"); xhr.timeout = 210_000;
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) progress(Math.round(event.loaded / event.total * 100)); };

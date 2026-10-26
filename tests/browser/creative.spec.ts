@@ -23,6 +23,7 @@ test("cinematic landing and accessible storyboard reflect real footage", async (
   await board.getByRole("button", { name: "Capture this shot" }).click();
   await page.locator('input[type="file"]').last().setInputFiles(path.join(process.cwd(), "public/samples/shot-2.mp4"));
   await expect(page.locator(".camera-box video")).toHaveAttribute("src", /api\/reels/, { timeout: 30_000 });
+  await expect(page.getByLabel("Shot Coach assessment")).toBeVisible();
   await page.getByRole("button", { name: "Back to shot plan" }).click();
   await expect(board.getByRole("button", { name: /shot 2, complete/ })).toBeVisible();
   await expect(board.locator("video")).toHaveAttribute("src", /shot-2/);
