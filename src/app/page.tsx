@@ -8,6 +8,7 @@ import { ArrowDown, ArrowUp, Camera, Check, ChevronLeft, Copy, Download, Film, L
 import { CAPTION_STYLES, defaultCreativeOptions, parseCreativeOptions, VIBES, type CreativeOptions } from "@/lib/creative/options";
 import { PRESETS, type ReelPreset } from "@/lib/presets";
 import { createStudioAssist } from "@/lib/ai/studio";
+import { useCamera } from "@/hooks/use-camera";
 
 type Screen = "welcome" | "presets" | "director" | "record" | "review" | "customize" | "processing" | "preview";
 type Shot = { previewUrl: string; duration: number; name: string };
@@ -33,11 +34,6 @@ function isStoredJob(value: unknown): value is Job {
   return typeof value === "object" && value !== null && "id" in value && "stage" in value && typeof value.id === "string" && stages.includes(value.stage as Job["stage"]);
 }
 
-function recorderMimeType(): string | undefined {
-  if (typeof MediaRecorder === "undefined") return undefined;
-  return ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
-}
-
 function formatBytes(value?: number): string | undefined {
   if (!value || value < 1) return undefined;
   return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)} MB` : `${Math.round(value / 1_000)} KB`;
@@ -53,12 +49,6 @@ export default function Home() {
   const [title, setTitle] = useState(PRESETS[0].title);
   const [creative, setCreative] = useState<CreativeOptions>(() => defaultCreativeOptions(PRESETS[0]));
   const [advancedGuidance, setAdvancedGuidance] = useState(false);
-  const [stream, setStream] = useState<MediaStream>();
-  const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const [countdown, setCountdown] = useState<number>();
-  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("user");
-  const [cameraError, setCameraError] = useState<string>();
   const [uploading, setUploading] = useState(false);
   const [job, setJob] = useState<Job>();
   const [publicDisplay, setPublicDisplay] = useState(false);
@@ -68,11 +58,10 @@ export default function Home() {
   const [shareMessage, setShareMessage] = useState<string>();
   const [restored, setRestored] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const recorder = useRef<MediaRecorder | undefined>(undefined);
-  const chunks = useRef<Blob[]>([]);
-  const countdownTimer = useRef<number | undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
+  const captureInput = useRef<HTMLInputElement>(null);
   const completedJobId = useRef<string | undefined>(undefined);
+  const { stream, recording, recordSeconds, countdown, cameraError, setCameraError, openCamera, stopCamera, beginRecording, stopRecording, switchCamera } = useCamera((file, shot) => { void uploadFile(file, shot); }, activeShot);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,13 +105,7 @@ export default function Home() {
   useEffect(() => {
     if (videoRef.current && stream) { videoRef.current.srcObject = stream; void videoRef.current.play(); }
   }, [stream, screen]);
-  useEffect(() => () => stream?.getTracks().forEach((track) => track.stop()), [stream]);
-  useEffect(() => {
-    if (!recording) return;
-    setRecordSeconds(0);
-    const timer = window.setInterval(() => setRecordSeconds((seconds) => seconds + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [recording]);
+  useEffect(() => { if (screen !== "record") stopCamera(); }, [screen, stopCamera]);
   useEffect(() => {
     if (!job || job.stage === "completed" || job.stage === "failed") return;
     const timer = window.setInterval(async () => {
@@ -138,52 +121,6 @@ export default function Home() {
     setSelectedCoverUrl(job.coverUrl);
     setRenders((current) => current.some((render) => render.id === job.id) ? current : [{ ...job, presetId: job.presetId }, ...current].slice(0, 8));
   }, [job]);
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.hidden && recorder.current?.state === "recording") {
-        setCameraError("Recording paused because the page was backgrounded. Review the saved clip or record it again.");
-        recorder.current.stop();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-
-  function stopCamera() { if (countdownTimer.current) window.clearInterval(countdownTimer.current); countdownTimer.current = undefined; recorder.current?.state === "recording" && recorder.current.stop(); stream?.getTracks().forEach((track) => track.stop()); setStream(undefined); setRecording(false); setCountdown(undefined); }
-  async function openCamera(nextFacing = cameraFacing) {
-    setCameraError(undefined); stopCamera();
-    if (!navigator.mediaDevices?.getUserMedia) { setCameraError("This browser cannot access a camera. Upload a gallery video instead."); return; }
-    if (!window.isSecureContext) { setCameraError("Camera access requires HTTPS or localhost. Upload a gallery video instead."); return; }
-    try {
-      const nextStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: nextFacing }, width: { ideal: 720 }, height: { ideal: 1280 } }, audio: false });
-      nextStream.getVideoTracks().forEach((track) => track.addEventListener("ended", () => setCameraError("The camera disconnected. Reopen it or upload a clip."), { once: true }));
-      setStream(nextStream);
-    }
-    catch (error) {
-      const name = error instanceof DOMException ? error.name : "";
-      setCameraError(name === "NotAllowedError" ? "Camera access was denied. You can still upload a video from your gallery." : name === "NotReadableError" ? "This camera is already in use by another app. Close it and try again." : "We could not open this camera. On mobile, use HTTPS or localhost, or upload instead.");
-    }
-  }
-  async function switchCamera() { const next = cameraFacing === "user" ? "environment" : "user"; setCameraFacing(next); await openCamera(next); }
-  function beginRecording() {
-    if (!stream) return;
-    setCountdown(3);
-    let value = 3;
-    countdownTimer.current = window.setInterval(() => { value -= 1; setCountdown(value || undefined); if (!value) { if (countdownTimer.current) window.clearInterval(countdownTimer.current); countdownTimer.current = undefined; startRecorder(); } }, 1000);
-  }
-  function startRecorder() {
-    try {
-      if (typeof MediaRecorder === "undefined") throw new Error("MediaRecorder unavailable");
-      chunks.current = [];
-      const mimeType = recorderMimeType();
-      recorder.current = new MediaRecorder(stream!, mimeType ? { mimeType } : undefined);
-      recorder.current.ondataavailable = (event) => event.data.size && chunks.current.push(event.data);
-      recorder.current.onerror = () => setCameraError("Recording was interrupted. You can try again or upload a clip.");
-      recorder.current.onstop = () => { const type = mimeType || "video/webm"; const extension = type.startsWith("video/mp4") ? "mp4" : "webm"; const blob = new Blob(chunks.current, { type }); if (blob.size) void uploadFile(new File([blob], `recorded-shot-${activeShot + 1}.${extension}`, { type })); };
-      recorder.current.start(); setRecording(true); setRecordSeconds(0);
-    } catch { setCameraError("Recording is not supported here. Upload a video instead."); }
-  }
-  function stopRecording() { recorder.current?.stop(); setRecording(false); }
   async function uploadFile(file: File, shotIndex = activeShot) {
     setUploading(true); setCameraError(undefined);
     try {
@@ -264,7 +201,7 @@ export default function Home() {
     {screen === "welcome" && <section className="welcome"><p className="eyebrow">COLLEGE FESTIVAL EDITION</p><h1>Three shots.<br /><i>One standout reel.</i></h1><p className="lede">Shoot or upload three real moments. We’ll turn them into a vertical MP4 that is yours to download.</p><div className="actions"><button className="primary" onClick={() => setScreen("presets")}>Create a reel <Film size={18} /></button><button className="secondary" onClick={() => void loadSamples()}>Try with sample clips <Play size={17} /></button></div><div className="how"><span><b>01</b> Pick a style</span><span><b>02</b> Capture three shots</span><span><b>03</b> Export your reel</span></div></section>}
     {screen === "presets" && <section className="page"><button className="back" onClick={() => setScreen("welcome")}><ChevronLeft size={17} /> Back</button><p className="eyebrow">CHOOSE YOUR CUT</p><h2>What’s the story?</h2><p className="lede">Every preset makes a genuinely different edit. Pick the feeling first.</p><div className="preset-grid">{PRESETS.map((item, index) => <article className={`preset preset-${index + 1}`} key={item.id}><div className="preset-number">0{index + 1}</div><p className="eyebrow">{item.eyebrow}</p><h3>{item.name}</h3><p>{item.description}</p><div className="preset-meta"><span>{item.duration}</span><span>{item.shots[0]}</span></div><button className="card-action" onClick={() => choosePreset(item)}>Choose this style <span>→</span></button></article>)}</div></section>}
     {screen === "director" && <section className="page director-page"><button className="back" onClick={() => setScreen("presets")}><ChevronLeft size={17} /> Change preset</button><p className="eyebrow">CREATIVE DIRECTOR · DETERMINISTIC GUIDANCE</p><h2>Here’s your three-shot plan.</h2><p className="lede">Choose a vibe, then capture one simple action per shot. The guidance is preset-specific and works without an external AI service.</p><div className="director-controls"><div><span className="control-label">Creative vibe</span><div className="choice-row">{VIBES.map((vibe) => <button key={vibe} className={creative.vibe === vibe ? "choice active-choice" : "choice"} onClick={() => setCreative((current) => ({ ...current, vibe }))}>{vibe}</button>)}</div></div><div className="director-actions"><button className="secondary" onClick={() => setAdvancedGuidance((current) => !current)}>{advancedGuidance ? "Simple guidance" : "More filming detail"}</button><button className="roulette" onClick={() => setChallenge(challenges[Math.floor(Math.random() * challenges.length)])}><Shuffle size={17} /> {challenge?.title || "Surprise me"}</button></div></div>{challenge && <p className="challenge-note"><b>{challenge.title}</b> · {challenge.description} <small>Recommended: {PRESETS.find((item) => item.id === challenge.presetId)?.name} · {challenge.difficulty}</small>{challenge.presetId !== preset.id && <button className="challenge-style" onClick={() => { const suggested = PRESETS.find((item) => item.id === challenge.presetId)!; setPreset(suggested); setTitle(suggested.title); setCreative(defaultCreativeOptions(suggested)); }}>Use recommended style</button>}</p>}<div className="director-grid">{assist.director.map((shot, index) => <article className="director-shot" key={shot.title}><span>0{index + 1}</span><h3>{shot.title}</h3><p>{shot.direction}</p><dl><div><dt>Angle</dt><dd>{shot.angle}</dd></div><div><dt>Length</dt><dd>{shot.duration}</dd></div>{advancedGuidance && <div><dt>Example</dt><dd>{shot.example}</dd></div>}</dl></article>)}</div><div className="actions"><button className="primary" onClick={() => { setCreative((current) => ({ ...current, hook: assist.hook })); setScreen("record"); }}>Use this shot plan <Camera size={18} /></button></div></section>}
-    {screen === "record" && <section className="page recording-page"><button className="back" onClick={() => { stopCamera(); setScreen("director"); }}><ChevronLeft size={17} /> Back to shot plan</button><div className="record-head"><div><p className="eyebrow">{preset.name} · SHOT {activeShot + 1} OF 3</p><h2>{guide}</h2><p className="lede">{challenge ? `Roulette challenge: ${challenge.title}. ` : ""}Keep it short: 3–8 seconds is ideal.</p></div><button className="roulette" onClick={() => setChallenge(challenges[Math.floor(Math.random() * challenges.length)])}><Shuffle size={17} /> {challenge?.title || "Reel Roulette"}</button></div><div className="shot-progress">{preset.shots.map((shot, i) => <button className={i === activeShot ? "current" : shots[i] ? "done" : ""} onClick={() => { stopCamera(); setActiveShot(i); }} key={shot}><span>{shots[i] ? <Check size={16} /> : i + 1}</span>{shot}</button>)}</div><div className="camera-box">{stream ? <video ref={videoRef} className="camera-live" muted playsInline /> : shots[activeShot] ? <video className="camera-live" src={shots[activeShot]?.previewUrl} controls playsInline /> : <div className="camera-empty"><Camera size={38} /><p>Camera stays off until you choose to open it.</p></div>}{countdown && <div className="countdown">{countdown}</div>}{recording && <div className="recording-dot">● REC {recordSeconds}s</div>}</div>{cameraError && <p className="error">{cameraError}</p>}<input ref={fileInput} type="file" accept="video/mp4,video/webm,video/quicktime,video/x-m4v,video/3gpp" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file); }} /><div className="camera-actions">{!stream && !shots[activeShot] && <button className="primary" disabled={uploading} onClick={() => void openCamera()}><Camera size={18} /> Open camera</button>}{stream && !recording && <><button className="primary" disabled={!!countdown || uploading} onClick={beginRecording}><Video size={18} /> {countdown ? "Get ready…" : "Record shot"}</button><button className="secondary" onClick={() => void switchCamera()}><RefreshCw size={17} /> Flip</button></>}{recording && <button className="stop" onClick={stopRecording}><span /> Stop recording</button>}<button className="secondary" disabled={uploading} onClick={() => fileInput.current?.click()}><Upload size={17} /> {uploading ? "Uploading…" : "Upload video"}</button>{shots[activeShot] && <button className="secondary" disabled={uploading} onClick={() => void removeShot(activeShot)}><X size={17} /> Retake</button>}</div>{isReady && <button className="continue" onClick={() => { stopCamera(); setScreen("review"); }}>Review three shots <span>→</span></button>}</section>}
+    {screen === "record" && <section className="page recording-page"><button className="back" onClick={() => { stopCamera(); setScreen("director"); }}><ChevronLeft size={17} /> Back to shot plan</button><div className="record-head"><div><p className="eyebrow">{preset.name} · SHOT {activeShot + 1} OF 3</p><h2>{guide}</h2><p className="lede">{challenge ? `Roulette challenge: ${challenge.title}. ` : ""}Keep it short: 3–8 seconds is ideal.</p></div><button className="roulette" onClick={() => setChallenge(challenges[Math.floor(Math.random() * challenges.length)])}><Shuffle size={17} /> {challenge?.title || "Reel Roulette"}</button></div><div className="shot-progress">{preset.shots.map((shot, i) => <button className={i === activeShot ? "current" : shots[i] ? "done" : ""} onClick={() => { stopCamera(); setActiveShot(i); }} key={shot}><span>{shots[i] ? <Check size={16} /> : i + 1}</span>{shot}</button>)}</div><div className="camera-box">{stream ? <video ref={videoRef} className="camera-live" muted playsInline /> : shots[activeShot] ? <video className="camera-live" src={shots[activeShot]?.previewUrl} controls playsInline /> : <div className="camera-empty"><Camera size={38} /><p>Camera stays off until you choose to open it.</p></div>}{countdown && <div className="countdown">{countdown}</div>}{recording && <div className="recording-dot">● REC {recordSeconds}s</div>}</div>{cameraError && <p role="alert" className="error">{cameraError}</p>}<input ref={captureInput} type="file" accept="video/*" capture="environment" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file); }} /><input ref={fileInput} type="file" accept="video/*" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file); }} /><div className="camera-actions">{!stream && !shots[activeShot] && <button className="primary" disabled={uploading} onClick={() => void openCamera()}><Camera size={18} /> Open camera</button>}{stream && !recording && <><button className="primary" disabled={!!countdown || uploading} onClick={beginRecording}><Video size={18} /> {countdown ? "Get ready…" : "Record shot"}</button><button className="secondary" disabled={!!countdown || uploading} onClick={() => void switchCamera()}><RefreshCw size={17} /> Flip</button></>}{recording && <button className="stop" onClick={stopRecording}><span /> Stop recording</button>}<button className="secondary" disabled={uploading} onClick={() => fileInput.current?.click()}><Upload size={17} /> {uploading ? "Uploading…" : "Upload video"}</button><button className="secondary" disabled={uploading || recording} onClick={() => captureInput.current?.click()}>Use phone camera</button>{stream && <button className="secondary" onClick={() => stopCamera()}>Close camera</button>}{shots[activeShot] && <button className="secondary" disabled={uploading} onClick={() => void removeShot(activeShot)}><X size={17} /> Retake</button>}</div>{isReady && <button className="continue" onClick={() => { stopCamera(); setScreen("review"); }}>Review three shots <span>→</span></button>}</section>}
     {screen === "review" && <section className="page"><button className="back" onClick={() => setScreen("record")}><ChevronLeft size={17} /> Back to shots</button><p className="eyebrow">FOOTAGE REVIEW</p><h2>Your three moments are saved.</h2><p className="lede">Preview each shot, replace anything you do not like, then choose how the edit should feel.</p><div className="review-grid"><div className="shot-review">{shots.map((shot, index) => <div key={index}><video src={shot?.previewUrl} controls playsInline /><div><b>Shot {index + 1}</b><span>{shot?.duration}s · {creative.captions[index]}</span></div><button onClick={() => { setActiveShot(index); setScreen("record"); }}>Replace</button></div>)}</div><aside className="export-settings"><p className="eyebrow">{preset.name}</p><h3>Ready for the creative pass?</h3><p className="privacy">Your footage is private by default. The next step lets you choose the hook, captions, order, and sound.</p><button className="primary wide" onClick={() => setScreen("customize")}>Customize reel <Sparkles size={18} /></button></aside></div></section>}
     {screen === "customize" && <section className="page customize-page"><button className="back" onClick={() => setScreen("review")}><ChevronLeft size={17} /> Back to footage</button><p className="eyebrow">CUSTOMIZE THE CUT</p><h2>Make the story yours.</h2><p className="lede">Every setting below is included in the exported MP4. There are no decorative controls.</p><div className="customize-grid"><div className="customize-main"><section className="settings-section"><label className="field-label">Reel title<input value={title} maxLength={52} onChange={(event) => setTitle(event.target.value)} /></label><span className="control-label">Opening hook</span><div className="hook-options">{assist.hookOptions.map((hook) => <button className={creative.hook === hook ? "hook-option active-choice" : "hook-option"} key={hook} onClick={() => setCreative((current) => ({ ...current, hook }))}>{hook}</button>)}</div><label className="field-label">Or write your own hook<input value={creative.hook} maxLength={52} onChange={(event) => setCreative((current) => ({ ...current, hook: event.target.value }))} /></label></section><section className="settings-section"><span className="control-label">Caption style</span><div className="choice-row">{CAPTION_STYLES.map((style) => <button className={creative.captionStyle === style ? "choice active-choice" : "choice"} key={style} onClick={() => setCreative((current) => ({ ...current, captionStyle: style }))}>{style}</button>)}</div><div className="caption-fields">{creative.captions.map((caption, index) => <label className="field-label" key={index}>Shot {index + 1} overlay<input value={caption} maxLength={44} onChange={(event) => setCreative((current) => { const captions = [...current.captions] as [string, string, string]; captions[index] = event.target.value; return { ...current, captions }; })} /></label>)}</div></section><section className="settings-section"><span className="control-label">Shot order</span><p className="privacy">These buttons change the actual FFmpeg input order.</p><div className="order-list">{creative.shotOrder.map((shotIndex, index) => <div key={`${shotIndex}-${index}`}><span>0{index + 1}</span><b>Recorded shot {shotIndex + 1}</b><div><button aria-label={`Move recorded shot ${shotIndex + 1} earlier`} disabled={index === 0} onClick={() => changeOrder(index, -1)}><ArrowUp size={16} /></button><button aria-label={`Move recorded shot ${shotIndex + 1} later`} disabled={index === 2} onClick={() => changeOrder(index, 1)}><ArrowDown size={16} /></button></div></div>)}</div></section></div><aside className="export-settings"><span className="control-label">Sound</span><button className={creative.audioMode === "muted" ? "sound-option active-choice" : "sound-option"} onClick={() => setCreative((current) => ({ ...current, audioMode: "muted" }))}><VolumeX size={18} /><span><b>Muted</b><small>Reliable, music-free export.</small></span></button><button className={creative.audioMode === "original" ? "sound-option active-choice" : "sound-option"} onClick={() => setCreative((current) => ({ ...current, audioMode: "original" }))}><Volume2 size={18} /><span><b>Original clip audio</b><small>Uses available clip sound with safe volume normalization.</small></span></button><label className="consent"><input checked={publicDisplay} onChange={(event) => setPublicDisplay(event.target.checked)} type="checkbox" /><span><b>Premiere on the festival screen</b><small>Optional. Your reel may be played at this stall.</small></span></label><label className="consent"><input checked={promoReuse} onChange={(event) => setPromoReuse(event.target.checked)} type="checkbox" /><span><b>Allow promotional reuse</b><small>Optional. Separate permission for festival promotion.</small></span></label><p className="privacy">By exporting, you confirm you have permission to upload these faces. Files are stored temporarily on this demo machine.</p><button className="primary wide" onClick={() => void generate()}>Generate MP4 <Sparkles size={18} /></button></aside></div></section>}
     {screen === "processing" && <section className="processing"><LoaderCircle className="spin" size={42} /><p className="eyebrow">REAL EXPORT JOB</p><h2>{job?.stage === "failed" ? "Export needs another try" : "Building your reel"}</h2><p className="lede">{job?.stage === "queued" ? "Queued behind another render." : job?.stage === "validating" ? "Checking your three video files." : job?.stage === "preparing" ? "Normalizing vertical video and orientation." : job?.stage === "rendering" ? "Applying your preset’s cuts, effects, and title." : job?.stage === "finalizing" ? "Writing a mobile-ready MP4." : job?.error || "Starting the export job…"}</p>{job?.stage === "failed" && <button className="primary" onClick={() => void generate()}>Retry export</button>}</section>}
