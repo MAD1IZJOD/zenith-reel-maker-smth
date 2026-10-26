@@ -1,12 +1,13 @@
 import { randomUUID, createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
 import { probeVideo } from "../src/lib/video/metadata";
-import { sessionDirectory } from "../src/lib/storage/session-storage";
+import { ffmpeg, runProcess } from "../src/lib/video/process";
 
 const port = 3101;
 const baseUrl = `http://127.0.0.1:${port}`;
+const testRoot = path.join(process.cwd(), "data", "api-tests");
 const nextEnvPath = path.join(process.cwd(), "next-env.d.ts");
 const log: string[] = [];
 const cookies = new Map<string, string>();
@@ -23,7 +24,7 @@ function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),
     windowsHide: true,
-    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1", OPERATOR_SECRET: operatorTestSecret, ENABLE_LEADERBOARD: "true" },
+    env: { ...process.env, DATA_DIR: testRoot, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1", OPERATOR_SECRET: operatorTestSecret, ENABLE_LEADERBOARD: "true" },
   });
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));
@@ -37,7 +38,7 @@ async function stopServer(child: ChildProcess): Promise<void> {
   await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))]);
 }
 
-let server = startServer();
+let server: ChildProcess;
 
 async function waitForHealth(): Promise<void> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -84,8 +85,9 @@ async function createJob(sessionId: string, presetId: string, title: string, con
 }
 
 async function main() {
-  const originalNextEnv = await readFile(nextEnvPath, "utf8");
+  const originalNextEnv = await readFile(nextEnvPath, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return ""; throw error; });
   try {
+    server = startServer();
     await waitForHealth();
     await expectStatus(await fetch(`${baseUrl}/api/jobs?id=not-a-job-id`), 404, "invalid job lookup");
     const invalidSession = await newSession();
@@ -119,7 +121,7 @@ async function main() {
       if ((await coverResponse.arrayBuffer()).byteLength < 1_024) throw new Error("Retrieved cover was unexpectedly small.");
     }
     const asset = firstOutput.outputUrl.split("/").at(-1)!;
-    const metadata = await probeVideo(path.join(sessionDirectory(sessionId), asset));
+    const metadata = await probeVideo(path.join(testRoot, "sessions", sessionId, asset));
     if (metadata.codecName !== "h264" || metadata.width !== 720 || metadata.height !== 1280 || metadata.duration <= 0) throw new Error(`Unexpected API export metadata: ${JSON.stringify(metadata)}`);
     await expectStatus(await fetch(`${baseUrl}/api/reels/${randomUUID()}/${asset}`), 401, "unknown-session protection");
     await expectStatus(await rawFetch(`${baseUrl}${firstOutput.outputUrl}`), 401, "known session without cookie denied");
@@ -136,7 +138,7 @@ async function main() {
     await expectStatus(await rawFetch(`${baseUrl}/api/retrieval/${token}`), 410, "revoked retrieval denied");
     const expiresResponse = await fetch(`${baseUrl}/api/retrieval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: firstJob.id }) });
     const expiresToken = (await expiresResponse.json()).token;
-    const tokenFile = path.join(process.cwd(), "data", "retrieval", `${createHash("sha256").update(expiresToken).digest("hex")}.json`);
+    const tokenFile = path.join(testRoot, "retrieval", `${createHash("sha256").update(expiresToken).digest("hex")}.json`);
     const tokenRecord = JSON.parse(await readFile(tokenFile, "utf8")); tokenRecord.expiresAt = Date.now() - 1; await writeFile(tokenFile, JSON.stringify(tokenRecord));
     await expectStatus(await rawFetch(`${baseUrl}/api/retrieval/${expiresToken}`), 410, "expired retrieval denied");
     const post = (url: string, body: unknown) => fetch(`${baseUrl}${url}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -195,9 +197,37 @@ async function main() {
       await expectStatus(wrongBrowser, 401, "cross-session access denied");
     }
     console.log(JSON.stringify({ concurrentSessions: concurrentSessions.length, admitted: admitted.length, overloaded: rejected, concurrentOutputs }, null, 2));
+    const ops = await (await fetch(`${baseUrl}/api/operator`)).json();
+    if (ops.queue.running > 1 || ops.videoProcesses.peak > 3) throw new Error("Video process bound exceeded");
+    console.log(JSON.stringify({ videoProcessPeak: ops.videoProcesses.peak, metrics: ops.metrics, testRoot }));
+    const fixtures = path.join(testRoot, "fixtures"); await mkdir(fixtures, { recursive: true });
+    const landscape = path.join(fixtures, "landscape.mp4"); const rotated = path.join(fixtures, "rotated.mp4"); const webm = path.join(fixtures, "clip.webm");
+    await runProcess(ffmpeg(), ["-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=12", "-t", "0.7", "-c:v", "libx264", "-pix_fmt", "yuv420p", landscape], "Landscape fixture");
+    await runProcess(ffmpeg(), ["-y", "-i", landscape, "-c", "copy", "-metadata:s:v:0", "rotate=90", rotated], "Rotation fixture");
+    await runProcess(ffmpeg(), ["-y", "-i", landscape, "-c:v", "libvpx", webm], "WebM fixture");
+    const mixed = await newSession();
+    for (const [index, input] of [rotated, landscape, webm].entries()) await expectStatus(await upload(mixed, index + 1, await readFile(input), index === 2 ? "video/webm" : "video/mp4"), 200, "mixed orientation/codec upload");
+    const mixedJob = await createJob(mixed, "glow-up", "Mixed short footage"); const mixedOutput = await waitForJob(mixedJob.id);
+    const mixedMetadata = await probeVideo(path.join(testRoot, "sessions", mixed, mixedOutput.outputUrl.split("/").at(-1)!));
+    if (mixedMetadata.width !== 720 || mixedMetadata.height !== 1280 || mixedMetadata.duration < 8 || mixedMetadata.codecName !== "h264") throw new Error("Mixed media export was invalid");
+    console.log(JSON.stringify({ mixedOutput, mixedMetadata }));
     await stopServer(server);
+    const interruptedId = randomUUID();
+    const interrupted = JSON.parse(await readFile(path.join(testRoot, "jobs", `${firstJob.id}.json`), "utf8"));
+    Object.assign(interrupted, { id: interruptedId, stage: "rendering", outputUrl: undefined, coverUrl: undefined, coverUrls: undefined });
+    await writeFile(path.join(testRoot, "jobs", `${interruptedId}.json`), JSON.stringify(interrupted));
+    const partial = path.join(testRoot, "sessions", sessionId, `reel-${interruptedId}.mp4`); await writeFile(partial, "incomplete-render-fixture");
+    const expiredId = randomUUID(); const expiredDirectory = path.join(testRoot, "sessions", expiredId); await mkdir(expiredDirectory, { recursive: true });
+    await writeFile(path.join(expiredDirectory, "shot-1.mp4"), firstClip);
+    await writeFile(path.join(testRoot, "access", `${expiredId}.json`), JSON.stringify({ id: expiredId, expiresAt: Date.now() - 1000 }));
     server = startServer();
     await waitForHealth();
+    const interruptedResponse = await fetch(`${baseUrl}/api/jobs?id=${interruptedId}`); const interruptedJob = (await interruptedResponse.json()).job;
+    if (interruptedJob.stage !== "failed" || !interruptedJob.error.includes("restarted")) throw new Error("Interrupted job was not failed honestly");
+    try { await access(partial); throw new Error("Partial export survived recovery"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    await access(path.join(testRoot, "sessions", sessionId, "shot-1.mp4"));
+    for (let attempt = 0; attempt < 20; attempt++) { try { await access(expiredDirectory); await new Promise((resolve) => setTimeout(resolve, 100)); } catch { break; } }
+    try { await access(expiredDirectory); throw new Error("Startup cleanup left expired media"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const recoveredResponse = await fetch(`${baseUrl}/api/jobs?id=${firstJob.id}`);
     await expectStatus(recoveredResponse, 200, "completed-job recovery after restart");
     const { job: recovered } = await recoveredResponse.json() as { job: { stage: string; consent: { publicDisplay: boolean; promoReuse: boolean } } };
@@ -206,10 +236,18 @@ async function main() {
     await expectStatus(recoveredDraftResponse, 200, "session draft recovery after restart");
     const { draft: recoveredDraft } = await recoveredDraftResponse.json() as { draft: { title: string; shots: unknown[] } };
     if (recoveredDraft.title !== draft.title || recoveredDraft.shots.length !== 3) throw new Error("Persisted studio draft was not recovered correctly.");
+    const idleId = randomUUID(); const idleDirectory = path.join(testRoot, "sessions", idleId); await mkdir(idleDirectory, { recursive: true });
+    await writeFile(path.join(idleDirectory, "shot-1.mp4"), firstClip);
+    await writeFile(path.join(testRoot, "access", `${idleId}.json`), JSON.stringify({ id: idleId, expiresAt: Date.now() - 1000 }));
+    console.log("Waiting for scheduled retention cleanup with no new HTTP traffic (up to 65 seconds)…");
+    let idleCleaned = false;
+    for (let attempt = 0; attempt < 130; attempt++) { try { await access(idleDirectory); await new Promise((resolve) => setTimeout(resolve, 500)); } catch { idleCleaned = true; break; } }
+    if (!idleCleaned) throw new Error("Idle scheduled cleanup did not remove expired media");
+    console.log("Scheduled idle cleanup passed; interrupted-job fixture failed honestly and preserved original clips.");
     console.log(JSON.stringify({ sessionId, firstOutput, secondOutput, metadata }, null, 2));
   } finally {
     await stopServer(server);
-    await writeFile(nextEnvPath, originalNextEnv, "utf8");
+    if (originalNextEnv) await writeFile(nextEnvPath, originalNextEnv, "utf8");
   }
 }
 

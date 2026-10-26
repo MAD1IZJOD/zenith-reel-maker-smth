@@ -25,8 +25,8 @@ async function main() {
   const customized = await renderReel({
     sessionId,
     presetId: "main-character",
-    title: "Creative proof",
-    hook: "A different opening hook",
+    title: "100%: O'Neil [safe]; %{literal}",
+    hook: "Quotes ' and commas, stay literal",
     captions: ["THIRD FIRST", "SECOND NOW", "FIRST LAST"],
     captionStyle: "bold",
     shotOrder: [2, 1, 0],

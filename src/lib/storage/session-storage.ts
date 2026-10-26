@@ -1,8 +1,8 @@
-import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { dataRoot, retentionMs } from "@/lib/server/config";
-import { exclusive, readJson, recordPath } from "@/lib/server/store";
+import { exclusive, readJson, recordPath, writeJson } from "@/lib/server/store";
 
 const root = path.join(dataRoot(), "sessions");
 const tokenPattern = /^[a-f0-9-]{36}$/i;
@@ -17,11 +17,7 @@ export function sessionDirectory(sessionId: string): string { return path.join(r
 export async function ensureSession(sessionId: string): Promise<string> { const directory = sessionDirectory(sessionId); await mkdir(directory, { recursive: true }); return directory; }
 function jobRecordPath(jobId: string): string { return path.join(jobsRoot, `${assertSessionId(jobId)}.json`); }
 export async function writeJobRecord<T extends { id: string }>(job: T): Promise<void> {
-  await mkdir(jobsRoot, { recursive: true });
-  const target = jobRecordPath(job.id);
-  const temporary = `${target}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(job), "utf8");
-  await rename(temporary, target);
+  await writeJson(jobRecordPath(job.id), job);
 }
 export async function readJobRecord<T>(jobId: string): Promise<T | undefined> {
   try { return JSON.parse(await readFile(jobRecordPath(jobId), "utf8")) as T; }
@@ -30,11 +26,8 @@ export async function readJobRecord<T>(jobId: string): Promise<T | undefined> {
 export async function removeJobRecord(jobId: string): Promise<void> { await rm(jobRecordPath(jobId), { force: true }); }
 function sessionDraftPath(sessionId: string): string { return path.join(sessionDirectory(sessionId), "draft.json"); }
 export async function writeSessionDraft<T>(sessionId: string, draft: T): Promise<void> {
-  const directory = await ensureSession(sessionId);
-  const target = sessionDraftPath(sessionId);
-  const temporary = path.join(directory, `draft-${randomUUID()}.tmp`);
-  await writeFile(temporary, JSON.stringify(draft), "utf8");
-  await rename(temporary, target);
+  await ensureSession(sessionId);
+  await writeJson(sessionDraftPath(sessionId), draft);
 }
 export async function readSessionDraft<T>(sessionId: string): Promise<T | undefined> {
   try { return JSON.parse(await readFile(sessionDraftPath(sessionId), "utf8")) as T; }

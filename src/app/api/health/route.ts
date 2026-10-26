@@ -7,7 +7,7 @@ export async function GET() {
   try {
     await Promise.all([runProcess(ffmpeg(), ["-version"], "FFmpeg health check", 10_000), runProcess(ffprobe(), ["-version"], "FFprobe health check", 10_000)]);
     return NextResponse.json({ status: "ok", videoPipeline: "available" });
-  } catch (error) {
-    return NextResponse.json({ status: "unavailable", videoPipeline: "unavailable", error: error instanceof Error ? error.message : "FFmpeg is unavailable." }, { status: 503 });
+  } catch {
+    return NextResponse.json({ status: "unavailable", videoPipeline: "unavailable", error: "FFmpeg or FFprobe is unavailable. Ask the stall operator to check the video installation." }, { status: 503 });
   }
 }

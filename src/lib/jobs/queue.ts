@@ -58,7 +58,7 @@ async function run(job: ReelJob) {
     job.coverUrl = job.coverUrls[0]; job.metrics.completedAt = Date.now(); job.stage = "completed"; await save(job); countSafely("reels_completed");
   } catch (error) {
     // Paths and raw FFmpeg diagnostics never enter visitor responses or public logs.
-    console.error("Render failed", { jobId: job.id, reason: error instanceof Error ? error.message.split(":")[0] : "unknown" });
+    console.error("Render failed", { jobId: job.id, stage: job.stage, reason: error instanceof Error ? error.message.split(":")[0] : "unknown", code: (error as NodeJS.ErrnoException).code, operation: (error as NodeJS.ErrnoException).syscall });
     job.stage = "failed"; job.error = "Export failed or timed out. Your original clips are saved. Please retry.";
     await removePartial(job); await save(job); countSafely("render_failures");
   } finally { await rm(workspace(job), { recursive: true, force: true }); }
@@ -81,6 +81,7 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
     const fingerprint = JSON.stringify([input.presetId, input.title, input.creative, input.challengeId, stamps]);
     const duplicate = [...queue.jobs.values()].find((job) => job.sessionId === input.sessionId && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
     if (duplicate) return duplicate;
+    if ([...queue.jobs.values()].some((job) => job.sessionId === input.sessionId && isActive(job))) throw new HttpError(429, "Your session already has an export processing. Wait for it to finish before starting another edit.");
     if (queue.paused || queue.draining) throw new HttpError(503, "The studio is temporarily paused. Your shots are saved; please try again shortly.");
     if (queue.running >= limit("MAX_CONCURRENT_RENDERS", 1, 4) && queue.pending.length >= limit("MAX_PENDING_RENDERS", 8, 100)) throw new HttpError(429, "The render queue is full. Your shots are saved. Please retry shortly.");
     const createdAt = Date.now();
@@ -94,7 +95,8 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
 export async function getJob(id: string): Promise<ReelJob | undefined> {
   await initializeQueue();
   const job = queue.jobs.get(id);
+  if (job && job.expiresAt <= Date.now() && !isActive(job)) queue.jobs.delete(id);
   return job && job.expiresAt > Date.now() ? job : undefined;
 }
-export async function listJobs() { await initializeQueue(); return [...queue.jobs.values()].filter((job) => job.expiresAt > Date.now()).sort((a, b) => b.createdAt - a.createdAt); }
+export async function listJobs() { await initializeQueue(); for (const [id, job] of queue.jobs) if (job.expiresAt <= Date.now() && !isActive(job)) queue.jobs.delete(id); return [...queue.jobs.values()].filter((job) => job.expiresAt > Date.now()).sort((a, b) => b.createdAt - a.createdAt); }
 export function beginShutdown() { queue.draining = true; }

@@ -3,8 +3,6 @@ import { parseCreativeOptions, type CreativeOptions } from "@/lib/creative/optio
 import { PRESETS } from "@/lib/presets";
 import { assertSessionId, readSessionDraft, writeSessionDraft } from "@/lib/storage/session-storage";
 import { errorResponse, requireSession } from "@/lib/server/security";
-import { countSafely } from "@/lib/festival/metrics";
-import { CHALLENGES } from "@/lib/creative/challenges";
 
 export const runtime = "nodejs";
 const screens = new Set(["welcome", "presets", "director", "record", "review", "customize", "processing", "preview"]);
@@ -88,9 +86,6 @@ export async function PUT(request: Request, context: { params: Promise<{ session
     const sessionId = assertSessionId((await context.params).sessionId);
     await requireSession(request, sessionId);
     const draft = parseDraft(await request.json(), sessionId);
-    const previous = await readSessionDraft<SessionDraft>(sessionId);
-    if (draft.presetId !== previous?.presetId) countSafely(`preset_${draft.presetId}`);
-    if (draft.challenge && draft.challenge !== previous?.challenge) { const challenge = CHALLENGES.find((item) => item.title === draft.challenge); if (challenge) countSafely(`challenge_${challenge.id}`); }
     await writeSessionDraft(sessionId, draft);
     return NextResponse.json({ saved: true });
   } catch (error) { return errorResponse(error, "Could not save session."); }

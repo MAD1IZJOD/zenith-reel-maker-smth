@@ -1,7 +1,14 @@
 node_modules/
 .next/
+.next-production/
 .next-api-test/
 data/
 public/samples/*.jpg
 .env.local
+.env
+.env.production
+.next-browser-test/
+playwright-report/
+test-results/
 *.tsbuildinfo
+next-env.d.ts

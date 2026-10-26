@@ -17,9 +17,15 @@ export async function readJson<T>(file: string): Promise<T | undefined> {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 export async function writeJson(file: string, value: unknown): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-  await rename(temporary, file);
+  await exclusive(`write:${file}`, async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
+    // Windows virus scanners/readers can briefly deny atomic replacement. Never unlink the valid record.
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(temporary, file); return; }
+      catch (error) { if (attempt >= 5 || !["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code || "")) throw error; await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt)); }
+    }
+  });
 }
 export const recordPath = (collection: string, id: string) => path.join(dataRoot(), collection, `${id}.json`);

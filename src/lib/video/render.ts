@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AudioMode, CaptionStyle, ShotOrder } from "@/lib/creative/options";
 import { getPreset, type ReelPreset } from "@/lib/presets";
@@ -8,6 +8,7 @@ import { ffmpeg, runProcess } from "./process";
 
 const font = (process.env.FFMPEG_FONT || (process.platform === "win32" ? "C:/Windows/Fonts/arialbd.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")).replace(/\\/g, "/").replace(/:/g, "\\:");
 const escapeText = (value: string) => value.replace(/['\\:]/g, "\\$&").replace(/[\r\n]/g, " ").slice(0, 52);
+const escapePath = (value: string) => value.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
 
 function captionFilter(caption: string, style: CaptionStyle): string {
   const styles: Record<CaptionStyle, string> = {
@@ -16,7 +17,7 @@ function captionFilter(caption: string, style: CaptionStyle): string {
     bold: "fontcolor=0xC4F46D:fontsize=38:x=(w-text_w)/2:y=h*0.73:box=1:boxcolor=black@0.62:boxborderw=14",
     retro: "fontcolor=0xF3D38A:fontsize=26:x=36:y=h*0.76:box=1:boxcolor=black@0.38:boxborderw=9",
   };
-  return `drawtext=fontfile='${font}':text='${escapeText(caption)}':${styles[style]}`;
+  return `drawtext=fontfile='${font}':textfile='${escapePath(caption)}':expansion=none:${styles[style]}`;
 }
 
 function effectFilter(preset: ReelPreset, caption: string, captionStyle: CaptionStyle): string {
@@ -56,18 +57,21 @@ export async function renderReel({ sessionId, presetId, title, hook, captions, c
   await mkdir(normalized, { recursive: true });
   const normalizedInputs = inputs.map((_, index) => path.join(normalized, `shot-${index + 1}.mp4`));
   const orderedCaptions = shotOrder.map((index) => captions?.[index] || preset.captions[index]);
+  const captionFiles = await Promise.all(orderedCaptions.map(async (caption, index) => { const file = path.join(normalized, `caption-${index}.txt`); await writeFile(file, caption.slice(0, 52), "utf8"); return file; }));
+  const titleFile = path.join(normalized, "title.txt"); const hookFile = path.join(normalized, "hook.txt");
+  await Promise.all([writeFile(titleFile, (title?.trim() || preset.title).slice(0, 52)), writeFile(hookFile, (hook?.trim() || preset.title).slice(0, 52))]);
   const sourceMetadata = await Promise.all(inputs.map((input) => probeVideo(input)));
   for (const [index, input] of inputs.entries()) {
     const includeOriginalAudio = audioMode === "original" && sourceMetadata[index].hasAudio;
-    await runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(preset.clipSeconds), "-vf", `${effectFilter(preset, orderedCaptions[index], captionStyle)},tpad=stop_mode=clone:stop_duration=${preset.clipSeconds}`, "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82,apad" : "volume=0", "-c:v", "libx264", "-threads", "2", "-filter_threads", "1", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
+    await runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(preset.clipSeconds), "-vf", `${effectFilter(preset, captionFiles[index], captionStyle)},tpad=stop_mode=clone:stop_duration=${preset.clipSeconds}`, "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82,apad" : "volume=0", "-c:v", "libx264", "-threads", "2", "-filter_threads", "1", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
   }
   const transitionDuration = preset.id === "movie-trailer" ? 0.65 : 0.35;
   const offsetOne = preset.clipSeconds - transitionDuration;
   const offsetTwo = preset.clipSeconds * 2 - transitionDuration * 2;
-  const chosenTitle = escapeText(title?.trim() || preset.title);
-  const chosenHook = escapeText(hook?.trim() || preset.title);
+  const chosenTitle = escapePath(titleFile);
+  const chosenHook = escapePath(hookFile);
   const label = preset.effect === "retro" ? "REC  •  10.26.2026" : preset.effect === "trailer" ? "SQUAD REEL STUDIO PRESENTS" : preset.eyebrow.toUpperCase();
-  const overlay = `drawtext=fontfile='${font}':text='${chosenTitle}':fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.10:box=1:boxcolor=black@0.38:boxborderw=16,drawtext=fontfile='${font}':text='${chosenHook}':fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=22:x=(w-text_w)/2:y=h*0.18:box=1:boxcolor=black@0.28:boxborderw=8,drawtext=fontfile='${font}':text='${escapeText(label)}':fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=20:x=(w-text_w)/2:y=h*0.88`;
+  const overlay = `drawtext=fontfile='${font}':textfile='${chosenTitle}':expansion=none:fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.10:box=1:boxcolor=black@0.38:boxborderw=16,drawtext=fontfile='${font}':textfile='${chosenHook}':expansion=none:fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=22:x=(w-text_w)/2:y=h*0.18:box=1:boxcolor=black@0.28:boxborderw=8,drawtext=fontfile='${font}':text='${escapeText(label)}':fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=20:x=(w-text_w)/2:y=h*0.88`;
   const output = path.join(directory, outputName || "reel.mp4");
   const renderWithTransition = (transition: ReelPreset["transition"]) => {
     const audioDuration = preset.clipSeconds * 3 - transitionDuration * 2;
@@ -81,7 +85,7 @@ export async function renderReel({ sessionId, presetId, title, hook, captions, c
   const covers: string[] = [];
   for (const [index, position] of positions.entries()) {
     const cover = path.join(directory, `cover-${baseName}-${index + 1}.jpg`);
-    const coverOverlay = `drawtext=fontfile='${font}':text='${chosenTitle}':fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.12:box=1:boxcolor=black@0.42:boxborderw=16`;
+    const coverOverlay = `drawtext=fontfile='${font}':textfile='${chosenTitle}':expansion=none:fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.12:box=1:boxcolor=black@0.42:boxborderw=16`;
     await runProcess(ffmpeg(), ["-y", "-ss", position.toFixed(2), "-i", output, "-frames:v", "1", "-vf", coverOverlay, "-q:v", "2", cover], "FFmpeg cover extraction");
     covers.push(cover);
   }
