@@ -41,11 +41,12 @@ export async function POST(request: Request) {
       try {
         await writeFile(temporary, Buffer.from(await file.arrayBuffer()));
         // MediaRecorder WebM commonly omits duration until remuxed. The bounded decode below measures it.
-        const metadata = await probeVideo(temporary, true);
+        const mediaLimitError = () => new HttpError(400, `Choose a decodable video from 0.5 to ${limit("MAX_CLIP_DURATION", 90, 180)} seconds, no larger than 8K. Your other shots are saved.`);
+        const metadata = await probeVideo(temporary, true).catch(() => { throw mediaLimitError(); });
         if (!metadata.formatName.split(",").some((format) => ["mov", "mp4", "webm", "matroska", "3gp", "3g2"].includes(format))) throw new HttpError(400, "This file is not a supported video container.");
         // Decode and normalize before publishing a preview: correct autorotation, aspect ratio and mobile playback.
         await runProcess(ffmpeg(), ["-y", "-v", "error", "-xerror", "-threads", "2", "-i", temporary, "-t", String(limit("MAX_CLIP_DURATION", 90, 180) + 1), "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1", "-filter_threads", "1", "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2", "-ar", "48000", "-movflags", "+faststart", normalized], "Upload normalization", 180_000);
-        const outputMetadata = await probeVideo(normalized);
+        const outputMetadata = await probeVideo(normalized).catch(() => { throw mediaLimitError(); });
         await rename(normalized, path.join(directory, `shot-${shot}.mp4`));
         countSafely("clip_saved");
         return NextResponse.json({ shot, metadata: outputMetadata, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4?v=${randomUUID()}` });
