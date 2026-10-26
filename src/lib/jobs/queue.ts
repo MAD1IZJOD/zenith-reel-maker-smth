@@ -9,10 +9,12 @@ import { dataRoot, limit, retentionMs } from "@/lib/server/config";
 import { exclusive } from "@/lib/server/store";
 import { HttpError } from "@/lib/server/security";
 import { countSafely } from "@/lib/festival/metrics";
+import { shotTranscripts } from "@/lib/transcription/clips";
+import { loadClips } from "@/lib/video/render";
 
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
 export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
-export type JobMetrics = { queueWaitMs?: number; planMs?: number; renderDurationMs?: number; encodeMs?: number; verifyMs?: number; totalMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number; width?: number; height?: number };
+export type JobMetrics = { queueWaitMs?: number; transcribeMs?: number; planMs?: number; renderDurationMs?: number; encodeMs?: number; verifyMs?: number; totalMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number; width?: number; height?: number };
 export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; creative: CreativeOptions; consent: ReelConsent; challengeId?: string; sourceId?: string; sourceJobId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
 type Queue = { jobs: Map<string, ReelJob>; pending: string[]; running: number; ready?: Promise<void>; paused: boolean; draining: boolean };
 const global = globalThis as typeof globalThis & { reelQueue?: Queue };
@@ -51,7 +53,15 @@ async function run(job: ReelJob) {
     job.stage = "preparing"; await save(job);
     const reelName = `reel-${job.id}.mp4`;
     const started = Date.now();
-    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
+    // Speech captions transcribe the immutable snapshot once; regenerations of the same footage reuse it.
+    let transcripts: Awaited<ReturnType<typeof shotTranscripts>>["words"] | undefined;
+    if (job.creative.captionMode === "speech" && (job.creative.audioMode === "original" || job.creative.audioMode === "mix") && job.sourceId) {
+      job.stage = "preparing"; await save(job);
+      const transcribeStarted = Date.now();
+      transcripts = (await shotTranscripts(path.join(dataRoot(), "sessions", job.sessionId, `sources-${job.sourceId}`), (await loadClips(workspace(job))).map((clip) => clip.hasAudio))).words;
+      job.metrics.transcribeMs = Date.now() - transcribeStarted;
+    }
+    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, transcripts, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
     const verifyStarted = Date.now();
     const [metadata, output] = await Promise.all([probeVideo(rendered.output), stat(rendered.output)]);
     if (metadata.codecName !== "h264" || metadata.width !== rendered.edl.canvas.width || metadata.height !== rendered.edl.canvas.height || output.size < 1024) throw new Error("Invalid export");

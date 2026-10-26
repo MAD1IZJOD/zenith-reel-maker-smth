@@ -24,10 +24,46 @@ def load_pcm(file_name):
     return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def transcribe_one(model, args, input_path, output_path):
+    started = time.time()
+    segments, info = model.transcribe(
+        load_pcm(input_path),
+        language=args.language,
+        word_timestamps=True,
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 400},
+        beam_size=1,
+        condition_on_previous_text=False,
+    )
+    output = []
+    for segment in segments:
+        words = [
+            {"text": word.word.strip()[:80], "start": round(float(word.start), 3), "end": round(float(word.end), 3), "probability": round(float(word.probability), 3)}
+            for word in (segment.words or [])
+            if word.word.strip()
+        ]
+        output.append({"start": round(float(segment.start), 3), "end": round(float(segment.end), 3), "text": segment.text.strip()[:2000], "words": words})
+    result = {
+        "version": 1,
+        "engine": "faster-whisper",
+        "model": args.model,
+        "language": info.language,
+        "duration": round(float(info.duration), 3),
+        "wordTimestamps": True,
+        "segments": output,
+        "processingSeconds": round(time.time() - started, 2),
+    }
+    temporary = output_path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False)
+    os.replace(temporary, output_path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--input")
+    parser.add_argument("--output")
+    parser.add_argument("--batch", help="JSON file listing up to 8 {input, output} pairs; the model loads once")
     parser.add_argument("--model", default="base")
     parser.add_argument("--language", default=None)
     parser.add_argument("--threads", type=int, default=4)
@@ -47,40 +83,22 @@ def main() -> int:
         return 2
     threads = max(1, min(int(args.threads), 8))
 
-    started = time.time()
-    model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=threads, num_workers=1)
-    segments, info = model.transcribe(
-        load_pcm(args.input),
-        language=args.language,
-        word_timestamps=True,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 400},
-        beam_size=1,
-        condition_on_previous_text=False,
-    )
-    output = []
-    for segment in segments:
-        words = [
-            {"text": word.word.strip()[:80], "start": round(float(word.start), 3), "end": round(float(word.end), 3), "probability": round(float(word.probability), 3)}
-            for word in (segment.words or [])
-            if word.word.strip()
-        ]
-        output.append({"start": round(float(segment.start), 3), "end": round(float(segment.end), 3), "text": segment.text.strip()[:2000], "words": words})
+    if args.batch:
+        with open(args.batch, "r", encoding="utf-8") as handle:
+            jobs = json.load(handle)
+        if not isinstance(jobs, list) or not 1 <= len(jobs) <= 8:
+            print("invalid batch", file=sys.stderr)
+            return 2
+        pairs = [(str(job["input"]), str(job["output"])) for job in jobs]
+    elif args.input and args.output:
+        pairs = [(args.input, args.output)]
+    else:
+        print("input and output are required", file=sys.stderr)
+        return 2
 
-    result = {
-        "version": 1,
-        "engine": "faster-whisper",
-        "model": args.model,
-        "language": info.language,
-        "duration": round(float(info.duration), 3),
-        "wordTimestamps": True,
-        "segments": output,
-        "processingSeconds": round(time.time() - started, 2),
-    }
-    temporary = args.output + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as handle:
-        json.dump(result, handle, ensure_ascii=False)
-    os.replace(temporary, args.output)
+    model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=threads, num_workers=1)
+    for input_path, output_path in pairs:
+        transcribe_one(model, args, input_path, output_path)
     return 0
 
 

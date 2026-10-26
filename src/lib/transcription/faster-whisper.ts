@@ -1,4 +1,4 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ffmpeg, runProcess } from "@/lib/video/process";
 import { transcriptSchema, type Transcript } from "./schema";
@@ -43,4 +43,13 @@ export async function transcribeWithWhisper(audio: string, output: string, secon
   const parsed = transcriptSchema.safeParse(JSON.parse(await readFile(output, "utf8")));
   if (!parsed.success) { await rm(output, { force: true }); throw new Error("The transcription result failed validation."); }
   return parsed.data;
+}
+
+/** Several short files in one worker run, so the model loads once (clip shots are transcribed together). */
+export async function transcribeBatch(pairs: { audio: string; output: string }[], batchFile: string, seconds: number): Promise<(Transcript | undefined)[]> {
+  const { python, worker, model, threads } = whisperConfig();
+  await writeFile(batchFile, JSON.stringify(pairs.map((pair) => ({ input: pair.audio, output: pair.output }))), "utf8");
+  try { await runProcess(python, [worker, "--batch", batchFile, "--model", model, "--threads", String(threads)], "Speech transcription", 300_000 + seconds * 3000); }
+  finally { await rm(batchFile, { force: true }); }
+  return Promise.all(pairs.map(async (pair) => { try { const parsed = transcriptSchema.safeParse(JSON.parse(await readFile(pair.output, "utf8"))); return parsed.success ? parsed.data : undefined; } catch { return undefined; } }));
 }

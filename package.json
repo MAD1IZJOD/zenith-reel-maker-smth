@@ -23,7 +23,8 @@
     "fixtures:fetch": "tsx scripts/fetch-fixtures.ts",
     "verify:qwen": "tsx scripts/verify-qwen.ts",
     "verify:transcription": "tsx scripts/verify-transcription.ts",
-    "verify:highlights": "tsx scripts/verify-highlight-render.ts"
+    "verify:highlights": "tsx scripts/verify-highlight-render.ts",
+    "verify:speech": "tsx scripts/verify-speech-captions.ts"
   },
   "engines": {
     "node": ">=20.9"
