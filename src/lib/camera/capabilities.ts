@@ -1,6 +1,7 @@
 export function recorderMimeType(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
-  return ["video/mp4;codecs=avc1.42E01E", "video/mp4", "video/webm;codecs=vp8", "video/webm;codecs=vp9", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
+  // VP8 works without a hardware H.264 encoder; Safari can fall back to its native MP4 implementation.
+  return ["video/webm;codecs=vp8", "video/mp4;codecs=avc1.42E01E", "video/mp4", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
 }
 
 export function cameraErrorMessage(error: unknown): string {

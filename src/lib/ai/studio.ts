@@ -1,5 +1,6 @@
 import type { CreativeVibe } from "@/lib/creative/options";
 import type { ReelPreset } from "@/lib/presets";
+import { CHALLENGES } from "@/lib/creative/challenges";
 
 /** Transparent, deterministic creative assistance. This deliberately makes no LLM claim. */
 export type StudioAssist = {
@@ -46,10 +47,11 @@ function hooksFor(preset: ReelPreset, vibe: CreativeVibe, challenge?: string): [
 export function createStudioAssist(preset: ReelPreset, input: DirectorInput = {}): StudioAssist {
   const vibe = input.vibe || "cinematic";
   const hookOptions = hooksFor(preset, vibe, input.challenge);
+  const challenge = CHALLENGES.find((item) => item.title === input.challenge);
   return {
     director: preset.shots.map((shot, index) => ({
       title: `Shot ${index + 1}: ${shot}`,
-      direction: `${input.challenge && index === 0 ? `${input.challenge}. ` : ""}${shot}. ${vibeDirection[vibe]}`,
+      direction: `${challenge && index === 0 ? `${challenge.title}. ` : ""}${challenge?.shots[index] || shot}. ${vibeDirection[vibe]}`,
       angle: input.advanced ? angles[index] : "Keep the camera steady.",
       duration: input.advanced ? "3–8 seconds" : "A short, clear moment",
       example: input.advanced ? examples[index] : "Focus on one readable action.",
