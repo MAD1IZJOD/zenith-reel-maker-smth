@@ -122,6 +122,12 @@ test("synthetic browser camera records and cleans up; this is not a physical-dev
 test("demo, operator sign-in boundary and empty public display", async ({ page }) => {
   await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Your three moments are saved." })).toBeVisible({ timeout: 30_000 });
+  // The stall's backup demo runs the real pipeline on sample footage and says so; it never claims a live recording.
+  await page.getByRole("button", { name: /Customize reel/ }).click();
+  await page.getByRole("button", { name: "Generate MP4" }).click();
+  await expect(page.getByRole("heading", { name: "Made from your moments." })).toBeVisible({ timeout: 180_000 });
+  await expect(page.getByText("SAMPLE FOOTAGE · REAL EXPORT")).toBeVisible();
+  await expect.poll(() => page.locator(".final-video video").evaluate((video: HTMLVideoElement) => video.readyState >= 2 && video.duration > 3), { timeout: 30_000 }).toBe(true);
   await page.goto("/operator"); await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await page.goto("/display"); await expect(page.getByRole("heading", { name: "3 Shots. 1 Epic Reel." })).toBeVisible();
   await expect(page.getByAltText("Scan to open the public festival creator page")).toBeVisible();
