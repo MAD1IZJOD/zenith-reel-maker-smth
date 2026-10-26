@@ -2,6 +2,8 @@
 
 A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical 720 × 1280 H.264/AAC MP4. Regenerate from the same footage without recording again.
 
+**Three shots. Infinite stories.** Phase 5 adds an interactive spatial storyboard, measured Shot Coach, two-output Remix Lab, soundtrack Beat Lab, and a non-destructive Finishing Studio. The five creative roles are deterministic tools, not a paid or simulated LLM service.
+
 Visitor entry: `/festival`. The ordinary creator entry remains at `/`. Staff controls are at `/operator`, the projector screen at `/display`, and privacy information at `/privacy`.
 
 ## Run locally
@@ -26,6 +28,9 @@ npm run typecheck
 npm run lint
 npm test
 npm run verify:api
+npm run verify:remix
+npm run verify:beats
+npm run verify:finishing
 npm run build
 npx playwright install chromium
 npm run verify:browser
@@ -40,7 +45,9 @@ npm run verify:browser
 
 The browser test uses generated Y4M footage as a synthetic camera feed through native getUserMedia and MediaRecorder. That verifies browser recording and upload integration, **not physical Android/iOS hardware**. Headless browser builds can lack recording/capture support even when ordinary playback works. Do not mistake a headless capability failure for a successful camera test.
 
-`npm test` runs eight unit/API tests, renders all seven styles from the same sample clips, checks dimensions/H.264/AAC/30fps/duration/covers and distinct output hashes, decodes every MP4 fully, then renders original-audio/customization fixtures including unsafe punctuation handled as literal text.
+`npm test` runs twelve unit/API tests, renders all seven styles from the same sample clips, checks dimensions/H.264/AAC/30fps/duration/covers and distinct output hashes, decodes every MP4 fully, then renders original-audio/customization fixtures including unsafe punctuation handled as literal text.
+
+`verify:remix` renders two real MP4s from one immutable source snapshot, replaces a current source clip between renders, and verifies that the original snapshot remains unchanged. `verify:beats` measures 3-second and 12-second exports, validates their cut positions and decodes non-silent AAC. `verify:finishing` compares actual decoded frames from independent title, caption, order, typography, visibility and trim changes; it also verifies that a cover-only edit leaves the movie unchanged.
 
 `verify:api` uses isolated `data/api-tests` storage and checks uploads, replacement, three-shot validation, session ownership, byte-range playback, retrieval expiry/revocation, operator authorization, screening consent/approval/removal/revocation, server-computed leaderboard points, bounded multi-session admission, duplicate prevention, mixed orientations/codecs, short clips, completed-job recovery, an interrupted-job fixture, startup cleanup and scheduled cleanup with no HTTP traffic. Allow roughly two minutes for the idle cleanup check.
 
@@ -59,11 +66,26 @@ The browser test uses generated Y4M footage as a synthetic camera feed through n
 - Public display that falls back to clearly labeled sample edits and shows only a public creator QR.
 - Startup/periodic retention cleanup, readiness checks, operational counters, production launcher with draining, container and HTTPS proxy examples.
 
-The Director, Editor, Hook, Caption and Cover roles are deterministic modules. They do not use or claim an LLM. No generative-video service, external analytics, paid provider or synthetic substitution for visitor footage is involved. Beat Sync uses a defined visual timing grid; no licensed soundtrack or automatic beat detection is bundled.
+The Director, Editor, Hook, Caption and Cover roles are deterministic modules. They do not use or claim an LLM. No generative-video service, external analytics, paid provider or synthetic substitution for visitor footage is involved. Beat Lab includes two original synthesized soundtracks: Neon Steps (120 BPM) and After Hours (90 BPM). The waveform measures the actual audio file; beat positions come from its defined composition grid. No automatic beat detection is claimed. Regenerate the tracks with `npm run generate:audio`.
+
+## Create, compare and finish
+
+1. Choose a preset. Select the three storyboard frames for their real filming instructions. Keyboard, touch and reduced-motion navigation use the same controls.
+2. Record or upload each shot. Shot Coach reports source size, duration, orientation and a few brightness samples. At most two suggestions appear; imperfect but valid clips remain usable.
+3. Review the clips, then open **Customize reel**. Finishing Studio separates Titles, Captions, Shots, Beat Lab and Cover into contextual panels. Original footage stays intact.
+4. In Beat Lab choose silent output, original clip sound, or an original studio track. Preset rhythm preserves the preset; Auto, Energetic and Cinematic use four, two and eight beats per segment; Custom supports 1–6 seconds per segment. Timeline markers show transition starts. Browser source preview is guidance, not a simulation of all FFmpeg effects.
+5. Generate and inspect the actual MP4 and three extracted covers. **Open Remix Lab** renders another style from that output's immutable source snapshot, retains both files, and supports independent playback, downloads and a saved favorite. On phones switch between the Original and Remix panels; desktop also offers synchronized starts.
+6. **Open Finishing Studio** returns to your editable current project. Adjust title timing, typography, closing title, captions, shot order/start offsets, or cover title/default moment; generate a new export to apply changes.
+
+Opening titles run for 1–4 seconds, shortened if necessary to avoid the last 1.5-second closing title. Shot starts must leave at least 0.5 seconds of source footage; shorter remaining footage is held to fill the chosen edit. Standard export is 720 × 1280/30fps H.264/AAC only. There is no pretend high-quality export control.
 
 ## Architecture
 
 - `src/components/studio.tsx` and `src/hooks/use-camera.ts`: shared creator workflow and owned media-stream lifecycle.
+- `src/components/creative`: landing, lazy spatial storyboard, Shot Coach, Remix Lab, Beat Lab, Finishing Studio and honest Agent Crew states.
+- `src/hooks/use-studio-motion.ts`: scoped finite GSAP animations, cleanup and reduced-motion media queries. The 3D presentation uses CSS perspective and native video, not WebGL textures; essential controls require no GPU capability detection.
+- `src/lib/creative/timeline.ts`: one edit-decision timeline shared by the ruler and FFmpeg; `options.ts` validates submitted settings while restoring legacy drafts with defaults.
+- `src/lib/video/shot-analysis.ts`: source metadata plus up to three small luminance samples; no aesthetic scoring, face recognition or semantic/stability analysis.
 - `src/lib/presets`, `creative`, `ai`: declarative edit configuration, safe deterministic guidance and completion rules.
 - `src/app/api/uploads`, `src/lib/video`: bounded validation, decode/normalization, rendering and cover extraction.
 - `src/lib/jobs/queue.ts`: process-wide bounded queue with input snapshots, persistence and recovery.
@@ -72,6 +94,7 @@ The Director, Editor, Hook, Caption and Cover roles are deterministic modules. T
 - `src/instrumentation.ts`: startup recovery and every-minute cleanup.
 - `scripts/serve.mjs`: long-running production HTTP server and bounded shutdown.
 - `deploy/RUNBOOK.md`: deployment, operation, privacy boundaries, rollback and real-device launch gates.
+- `deploy/PHASE5_REPORT.md`: Phase 5 feature evidence, test outputs, limitations and commit verification.
 
 Build artifacts are isolated: development uses `.next`, production `.next-production`, API tests `.next-api-test`. Generated Next type files are not tracked; stable framework references are in `src/types/next.d.ts`.
 
@@ -80,6 +103,8 @@ Build artifacts are isolated: development uses `.next`, production `.next-produc
 Session IDs are locators, not standalone credentials. A separate HTTP-only cookie authorizes original clips, drafts and jobs. Retrieval tokens permit only one finished reel and expire in at most six hours or with the reel; they never grant editing or original footage. Public screening requires an explicit submission and operator approval, with a separate reuse choice. Staff must confirm guardian permission for minors; the app records attestation, not verified age.
 
 The default session lifetime is 24 hours. Startup and every-minute cleanup operate while the host is running, protect active jobs, and resume after downtime. Deletion is not guaranteed while the host is offline. Backups need their own retention policy. Download counts measure requests; operational counters are not unique-visitor analytics.
+
+An immutable, private source snapshot is retained per footage revision for Remix Lab and expires with its session. Multiple exports from unchanged footage reuse it; replacing clips creates a new revision on the next export. This consumes extra temporary disk space. Existing pre-Phase-5 reels remain accessible but need one fresh render before source-preserving remix is available. The favorite choice is a private draft preference and does not grant screening consent.
 
 This is **one host and one Node process**, not horizontally scalable infrastructure. Keep render concurrency conservative until measured on the actual host. Do not use shared local storage with multiple app instances or deploy the queue to serverless functions.
 
