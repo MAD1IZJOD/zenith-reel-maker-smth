@@ -42,6 +42,8 @@ export function rateLimit(key: string, max: number, interval = 60_000) {
   buckets.set(key, bucket);
 }
 export function networkKey(request: Request): string {
-  // Only trust forwarding headers behind the documented, exclusively exposed reverse proxy.
+  // Only trust forwarding headers behind the documented, exclusively exposed reverse proxy. Cloudflare Tunnel sets
+  // CF-Connecting-IP itself, whereas a client can prepend its own X-Forwarded-For entries.
+  if (process.env.TRUST_PROXY === "cloudflare") return request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return process.env.TRUST_PROXY === "true" ? request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown" : "local";
 }
