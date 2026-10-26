@@ -35,7 +35,7 @@ function framing(edl: EditDecisionList, segment: EdlSegment, index: number, qual
   let chain: string;
   if (segment.crop === "fit-blur") {
     const aspect = source.width! / source.height!;
-    const fgHeight = Math.min(H, Math.max(Math.round(W / aspect), Math.round(H * 0.4)));
+    const fgHeight = Math.min(H, Math.max(Math.round(W / aspect), Math.round(H * segment.fitHeight)));
     const bgW = even(W / 8), bgH = even(H / 8);
     chain = `split=2[${label}b][${label}f];[${label}b]scale=${bgW}:${bgH}:force_original_aspect_ratio=increase,crop=${bgW}:${bgH},boxblur=5:2,scale=${W}:${H}:flags=bicubic,eq=brightness=-0.08:saturation=0.78[${label}bg];[${label}f]scale=-2:${even(fgHeight)}:flags=${flags},crop='min(iw,${W})':ih:(iw-ow)*${num(segment.focusX)}:0[${label}fg];[${label}bg][${label}fg]overlay=(W-w)/2:(H-h)/2`;
   } else if (segment.crop === "abstract") {

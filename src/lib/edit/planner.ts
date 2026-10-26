@@ -12,6 +12,8 @@ const round = (value: number) => Math.round(value * 1000) / 1000;
 const SPEECH_DB = -32;
 
 /** Portrait sources fill the frame; landscape and square sources sit on a soft blurred fill instead of black bars. */
+/** Phone clips have one central subject, so wide clips keep a near-square centre at more than half the frame height. */
+const CLIP_FIT_HEIGHT = 0.56;
 export const cropFor = (clip: Pick<PlannerClip, "width" | "height">): CropMode => (clip.width / clip.height > 0.75 ? "fit-blur" : "cover");
 
 /**
@@ -79,7 +81,7 @@ export function planClipEdit({ preset, options, title, clips, transcripts }: Cli
     // Speech must keep its natural pitch and rhythm, so only silent footage is gently slowed to fill a beat.
     const speed = available >= duration || (useOriginal && clip.hasAudio) ? 1 : Math.max(0.75, round(available / duration));
     const lowResolution = Math.min(clip.width, clip.height) < 480;
-    return { source, start: round(start), duration: round(duration), speed, crop: cropFor(clip), focusX: 0.5, motion: options.motion === "off" || lowResolution ? "none" as const : recipe.motion[position] };
+    return { source, start: round(start), duration: round(duration), speed, crop: cropFor(clip), focusX: 0.5, fitHeight: CLIP_FIT_HEIGHT, motion: options.motion === "off" || lowResolution ? "none" as const : recipe.motion[position] };
   });
 
   const hookEnd = round(Math.max(1, Math.min(options.titleSeconds, total - 2.2)));

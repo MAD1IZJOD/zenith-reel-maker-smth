@@ -38,6 +38,8 @@ export const segmentSchema = z.object({
   crop: z.enum([...CROP_MODES, "abstract"]),
   /** Horizontal crop centre for cover framing, 0 = left edge, 1 = right edge. */
   focusX: z.number().finite().min(0).max(1).default(0.5),
+  /** Fit-blur only: the smallest share of the canvas height the sharp foreground fills; higher crops more of a wide source's sides. */
+  fitHeight: z.number().finite().min(0.3).max(1).default(0.4),
   motion: z.enum(MOTIONS),
 });
 
