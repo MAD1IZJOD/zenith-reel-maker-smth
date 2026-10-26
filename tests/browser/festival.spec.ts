@@ -28,7 +28,7 @@ test("real upload, export, download, QR retrieval, consent and regeneration", as
   await page.getByRole("button", { name: "Review three shots" }).click();
   await page.getByRole("button", { name: "Customize reel" }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByLabel("Reel title").fill("Festival browser verification");
+  await page.getByLabel("Reel name · cover and file name").fill("Festival browser verification");
   await page.getByRole("button", { name: "Generate MP4" }).click();
   await expect(page.getByRole("heading", { name: "Made from your moments." })).toBeVisible({ timeout: 80_000 });
   const video = page.locator('.final-video video');
