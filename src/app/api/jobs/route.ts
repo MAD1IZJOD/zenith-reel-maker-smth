@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { parseCreativeOptions } from "@/lib/creative/options";
 import { createJob, getJob } from "@/lib/jobs/queue";
 import { getPreset } from "@/lib/presets";
 import { assertCompleteSession, assertSessionId, cleanupExpiredSessions } from "@/lib/storage/session-storage";
@@ -7,11 +8,12 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
+    const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
     const sessionId = assertSessionId(body.sessionId || "");
-    if (!getPreset(body.presetId || "")) throw new Error("Choose a valid preset.");
+    const preset = getPreset(body.presetId || "");
+    if (!preset) throw new Error("Choose a valid preset.");
     await assertCompleteSession(sessionId);
-    const job = await createJob({ sessionId, presetId: body.presetId!, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
+    const job = await createJob({ sessionId, presetId: body.presetId!, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, creative: parseCreativeOptions(body.creative, preset), consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
     void cleanupExpiredSessions();
     return NextResponse.json({ job });
   } catch (error) {

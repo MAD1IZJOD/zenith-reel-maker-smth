@@ -155,7 +155,7 @@ export default function Home() {
     setJob(data.job);
   }
   function choosePreset(next: ReelPreset) { setPreset(next); setTitle(next.title); setScreen("record"); }
-  const assist = createStudioAssist(preset, challenge);
+  const assist = createStudioAssist(preset, { challenge });
   const guide = assist.director[activeShot].direction;
   const isReady = shots.every(Boolean);
 

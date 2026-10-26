@@ -24,8 +24,9 @@ async function main() {
     if (metadata.width !== 720 || metadata.height !== 1280 || metadata.codecName !== "h264" || metadata.duration <= 0 || file.size < 1_024) {
       throw new Error(`${preset.name} did not produce a valid 720×1280 H.264 MP4: ${JSON.stringify({ metadata, bytes: file.size })}`);
     }
-    const cover = await stat(result.cover);
-    if (cover.size < 1_024) throw new Error(`${preset.name} did not produce a usable cover image.`);
+    if (result.covers.length !== 3) throw new Error(`${preset.name} did not produce three cover candidates.`);
+    const covers = await Promise.all(result.covers.map((cover) => stat(cover)));
+    if (covers.some((cover) => cover.size < 1_024)) throw new Error(`${preset.name} did not produce usable cover images.`);
     results.push({ preset: preset.id, output: result.output, duration: metadata.duration, sha256: createHash("sha256").update(await (await import("node:fs/promises")).readFile(result.output)).digest("hex") });
   }
   if (new Set(results.map((result) => result.sha256)).size !== PRESETS.length) throw new Error("One or more preset exports were byte-identical.");
