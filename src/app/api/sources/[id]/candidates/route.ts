@@ -5,12 +5,14 @@ import { readSource } from "@/lib/sources/store";
 import { readTranscript } from "@/lib/transcription/service";
 import { candidateWindows, DEFAULT_WINDOW, selectNonOverlapping } from "@/lib/highlights/candidates";
 import { rankCandidates } from "@/lib/highlights/rank";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 
 /** Highlight candidates from the stored transcript. `rank=model` asks local Qwen to reorder a heuristic shortlist. */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    await requirePodcastMode();
     const params = new URL(request.url).searchParams;
     const sessionId = assertSessionId(params.get("sessionId") || "");
     await requireSession(request, sessionId);

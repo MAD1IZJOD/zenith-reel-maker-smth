@@ -3,6 +3,7 @@ import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, requireSession } from "@/lib/server/security";
 import { isActive, listJobs } from "@/lib/jobs/queue";
 import { readSource, removeSource } from "@/lib/sources/store";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
@@ -14,7 +15,7 @@ async function authorize(request: Request) {
 }
 
 export async function GET(request: Request, context: Context) {
-  try { return NextResponse.json({ source: await readSource(await authorize(request), (await context.params).id) }); }
+  try { await requirePodcastMode(); return NextResponse.json({ source: await readSource(await authorize(request), (await context.params).id) }); }
   catch (error) { return errorResponse(error, "Source not found."); }
 }
 

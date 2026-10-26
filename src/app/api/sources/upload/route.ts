@@ -9,6 +9,7 @@ import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from 
 import { crossOriginReason } from "@/lib/server/origin";
 import { createSource, finishIngest, ingestsInFlight, sourceDirectory, sourceLimits, track } from "@/lib/sources/store";
 import { countSafely } from "@/lib/festival/metrics";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 const MEDIA_TYPE = /^(video|audio)\/[a-z0-9.+-]+$/i;
@@ -20,6 +21,7 @@ const MEDIA_TYPE = /^(video|audio)\/[a-z0-9.+-]+$/i;
 export async function PUT(request: Request) {
   let target: string | undefined;
   try {
+    await requirePodcastMode();
     const blocked = crossOriginReason(request.method, request.headers, new URL(request.url).origin);
     if (blocked) throw new HttpError(403, blocked);
     const params = new URL(request.url).searchParams;

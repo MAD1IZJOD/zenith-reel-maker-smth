@@ -77,3 +77,7 @@
 /* Comfortable touch targets for secondary links and buttons. */
 header .brand{min-height:44px}.landing-footer nav a{display:inline-flex;align-items:center;min-height:44px}
 .shot-review button{min-height:44px;padding:0 12px}.previous-renders a,.cover-picker>a.privacy{display:flex;align-items:center;min-height:44px}
+/* Feature gate: Create from clips leads; an unavailable mode is shown as plainly not clickable. */
+.mode-choice>button:first-child{border-color:#536831}
+.mode-unavailable{display:grid;gap:5px;padding:16px;border:1px dashed var(--line);border-radius:8px;color:var(--muted);cursor:not-allowed}
+.mode-unavailable b{color:#8b8b93}

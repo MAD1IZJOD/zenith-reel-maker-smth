@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, rateLimit, requireSession } from "@/lib/server/security";
 import { readTranscript, saveImportedTranscript, startTranscription } from "@/lib/transcription/service";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, context: Context) {
   try {
+    await requirePodcastMode();
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const transcript = await readTranscript(sessionId, (await context.params).id);
@@ -18,6 +20,7 @@ export async function GET(request: Request, context: Context) {
 /** `{ action: "transcribe" }` runs local faster-whisper; `{ action: "import", text }` stores SRT, WebVTT or JSON. */
 export async function POST(request: Request, context: Context) {
   try {
+    await requirePodcastMode();
     const body = await request.json() as { sessionId?: string; action?: string; language?: string; text?: string };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);

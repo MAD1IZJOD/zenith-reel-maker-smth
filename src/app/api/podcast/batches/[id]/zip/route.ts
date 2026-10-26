@@ -3,12 +3,14 @@ import { errorResponse, HttpError, requireSession } from "@/lib/server/security"
 import { batchView, reelFile } from "@/lib/podcast/batch";
 import { zipStream } from "@/lib/podcast/zip";
 import { countSafely } from "@/lib/festival/metrics";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 
 /** Streams the completed reels only; a partially finished batch yields a smaller archive, never a false "all ready". */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    await requirePodcastMode();
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const id = (await context.params).id;

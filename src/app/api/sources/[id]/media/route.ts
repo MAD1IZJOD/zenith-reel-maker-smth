@@ -2,12 +2,14 @@ import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, requireSession } from "@/lib/server/security";
 import { serveMedia } from "@/lib/server/media";
 import { readSource, sourceMediaPath } from "@/lib/sources/store";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 
 /** Private, range-capable playback of an imported source for highlight previews. Never publicly listed. */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    await requirePodcastMode();
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const source = await readSource(sessionId, (await context.params).id);

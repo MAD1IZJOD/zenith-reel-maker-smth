@@ -6,11 +6,13 @@ import { createSource, finishIngest, ingestsInFlight, listSources, saveSource, s
 import { assertPublicHost, parseMediaUrl, UnsafeUrlError } from "@/lib/sources/url-safety";
 import { downloadMedia } from "@/lib/sources/download";
 import { countSafely } from "@/lib/festival/metrics";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
+    await requirePodcastMode();
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     return NextResponse.json({ sources: await listSources(sessionId), limits: { maxMegabytes: Math.round(sourceLimits().maxBytes / 1048576), maxMinutes: Math.round(sourceLimits().maxSeconds / 60) } });
@@ -20,6 +22,7 @@ export async function GET(request: Request) {
 /** Imports from a direct, public media link. The download runs in the background; poll the source for status. */
 export async function POST(request: Request) {
   try {
+    await requirePodcastMode();
     const body = await request.json() as { sessionId?: string; url?: string; rightsConfirmed?: boolean };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);

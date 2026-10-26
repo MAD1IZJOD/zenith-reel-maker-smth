@@ -3,6 +3,7 @@ import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, rateLimit, requireSession } from "@/lib/server/security";
 import { serveMedia } from "@/lib/server/media";
 import { batchView, reelFile, updateReel } from "@/lib/podcast/batch";
+import { requirePodcastMode } from "@/lib/server/features";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string; index: string }> };
@@ -11,6 +12,7 @@ const reelIndex = (value: string) => { const index = Number(value); if (![1, 2, 
 /** Private playback and download of one completed reel, named zenith-reel-0N.mp4. */
 export async function GET(request: Request, context: Context) {
   try {
+    await requirePodcastMode();
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const { id, index } = await context.params;
@@ -22,6 +24,7 @@ export async function GET(request: Request, context: Context) {
 /** Edit title/hook/trim, swap the highlight, change this reel's style, or simply retry. Other reels are untouched. */
 export async function POST(request: Request, context: Context) {
   try {
+    await requirePodcastMode();
     const body = await request.json() as { sessionId?: string; changes?: unknown; style?: unknown };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
