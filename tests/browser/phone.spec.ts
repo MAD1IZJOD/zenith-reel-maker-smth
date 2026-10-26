@@ -1,5 +1,6 @@
 import { test, expect, devices } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -89,3 +90,26 @@ for (const { name, device } of profiles) {
     });
   });
 }
+
+test("several visitors uploading at the same moment all succeed without seeing an error", async ({ browser }) => {
+  test.setTimeout(180_000);
+  // Real-footage fixtures take longest to prepare, which is what makes uploads overlap; samples are the offline fallback.
+  const fixture = path.join(process.cwd(), "data", "fixtures", "tos-walk-portrait.mp4");
+  const clip = existsSync(fixture) ? fixture : sample(1);
+  const visitors = await Promise.all(Array.from({ length: 4 }, async () => {
+    const context = await browser.newContext({ viewport: devices["Pixel 7"].viewport, isMobile: true, hasTouch: true });
+    const page = await context.newPage();
+    await page.goto("/festival");
+    await page.getByRole("button", { name: "Start Creating" }).tap();
+    await page.locator(".preset .card-action").first().tap();
+    await page.getByRole("button", { name: "Use this shot plan" }).tap();
+    return { context, page };
+  }));
+  await Promise.all(visitors.map(({ page }) => page.locator("input[type=file]:not([capture])").setInputFiles(clip)));
+  for (const { page } of visitors) {
+    await expect(page.locator(".camera-box video[src*='shot-1']")).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByRole("button", { name: "Retry saved upload" })).toHaveCount(0);
+    await expect(page.locator(".error")).toHaveCount(0);
+  }
+  await Promise.all(visitors.map(({ context }) => context.close()));
+});
