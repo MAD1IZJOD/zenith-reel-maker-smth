@@ -4,6 +4,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { assertSessionId, cleanupExpiredSessions, ensureSession } from "@/lib/storage/session-storage";
 import { probeVideo } from "@/lib/video/metadata";
+import { errorResponse, requireSession } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 const supported = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/3gpp"]);
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
   try {
     const form = await request.formData();
     const sessionId = assertSessionId(String(form.get("sessionId") || ""));
+    await requireSession(request, sessionId);
     const shot = Number(form.get("shot"));
     const file = form.get("file");
     const maxBytes = Math.max(1, Number(process.env.MAX_UPLOAD_MB || 80)) * 1024 * 1024;
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ shot, metadata, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4` });
     } finally { await rm(temporary, { force: true }); }
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Upload failed." }, { status: 400 });
+    return errorResponse(error, "Upload failed. Choose a supported video within the size and duration limits.");
   }
 }
 
@@ -40,12 +42,13 @@ export async function DELETE(request: Request) {
   try {
     const url = new URL(request.url);
     const sessionId = assertSessionId(url.searchParams.get("sessionId") || "");
+    await requireSession(request, sessionId);
     const shot = Number(url.searchParams.get("shot"));
     if (!Number.isInteger(shot) || shot < 1 || shot > 3) throw new Error("Shot must be 1, 2, or 3.");
     const directory = await ensureSession(sessionId);
     await rm(path.join(directory, `shot-${shot}.mp4`), { force: true });
     return NextResponse.json({ cleared: true, shot });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not clear shot." }, { status: 400 });
+    return errorResponse(error, "Could not clear shot.");
   }
 }

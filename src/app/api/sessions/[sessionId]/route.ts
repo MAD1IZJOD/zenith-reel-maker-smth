@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { parseCreativeOptions, type CreativeOptions } from "@/lib/creative/options";
 import { PRESETS } from "@/lib/presets";
 import { assertSessionId, readSessionDraft, writeSessionDraft } from "@/lib/storage/session-storage";
+import { errorResponse, requireSession } from "@/lib/server/security";
 
 export const runtime = "nodejs";
-const screens = new Set(["welcome", "presets", "record", "review", "processing", "preview"]);
+const screens = new Set(["welcome", "presets", "director", "record", "review", "customize", "processing", "preview"]);
 const stages = new Set(["queued", "validating", "preparing", "rendering", "finalizing", "completed", "failed"]);
 
 type DraftShot = { previewUrl: string; duration: number; name: string } | null;
@@ -70,19 +71,21 @@ function parseDraft(input: unknown, sessionId: string): SessionDraft {
   };
 }
 
-export async function GET(_: Request, context: { params: Promise<{ sessionId: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ sessionId: string }> }) {
   try {
     const sessionId = assertSessionId((await context.params).sessionId);
+    await requireSession(request, sessionId);
     const draft = await readSessionDraft<SessionDraft>(sessionId);
     return draft ? NextResponse.json({ draft }) : NextResponse.json({ error: "No saved session." }, { status: 404 });
-  } catch { return NextResponse.json({ error: "Session not found." }, { status: 404 }); }
+  } catch (error) { return errorResponse(error); }
 }
 
 export async function PUT(request: Request, context: { params: Promise<{ sessionId: string }> }) {
   try {
     const sessionId = assertSessionId((await context.params).sessionId);
+    await requireSession(request, sessionId);
     const draft = parseDraft(await request.json(), sessionId);
     await writeSessionDraft(sessionId, draft);
     return NextResponse.json({ saved: true });
-  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save session." }, { status: 400 }); }
+  } catch (error) { return errorResponse(error, "Could not save session."); }
 }

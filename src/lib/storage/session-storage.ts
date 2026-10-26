@@ -1,10 +1,11 @@
 import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { dataRoot } from "@/lib/server/config";
 
-const root = path.join(process.cwd(), "data", "sessions");
+const root = path.join(dataRoot(), "sessions");
 const tokenPattern = /^[a-f0-9-]{36}$/i;
-const jobsRoot = path.join(process.cwd(), "data", "jobs");
+const jobsRoot = path.join(dataRoot(), "jobs");
 
 export function createSessionId(): string { return randomUUID(); }
 export function assertSessionId(value: string): string {
@@ -19,7 +20,6 @@ export async function writeJobRecord<T extends { id: string }>(job: T): Promise<
   const target = jobRecordPath(job.id);
   const temporary = `${target}.${randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(job), "utf8");
-  await rm(target, { force: true });
   await rename(temporary, target);
 }
 export async function readJobRecord<T>(jobId: string): Promise<T | undefined> {
@@ -33,7 +33,6 @@ export async function writeSessionDraft<T>(sessionId: string, draft: T): Promise
   const target = sessionDraftPath(sessionId);
   const temporary = path.join(directory, `draft-${randomUUID()}.tmp`);
   await writeFile(temporary, JSON.stringify(draft), "utf8");
-  await rm(target, { force: true });
   await rename(temporary, target);
 }
 export async function readSessionDraft<T>(sessionId: string): Promise<T | undefined> {

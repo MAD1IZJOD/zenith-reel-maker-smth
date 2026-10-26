@@ -9,6 +9,15 @@ const port = 3101;
 const baseUrl = `http://127.0.0.1:${port}`;
 const nextEnvPath = path.join(process.cwd(), "next-env.d.ts");
 const log: string[] = [];
+const cookies = new Map<string, string>();
+const rawFetch = globalThis.fetch;
+async function fetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers); headers.set("Cookie", [...cookies].map(([key, value]) => `${key}=${value}`).join("; "));
+  const response = await rawFetch(input, { ...init, headers });
+  for (const entry of response.headers.getSetCookie()) { const [pair] = entry.split(";"); const split = pair.indexOf("="); cookies.set(pair.slice(0, split), pair.slice(split + 1)); }
+  return response;
+}
+async function newSession(): Promise<string> { const response = await fetch(`${baseUrl}/api/sessions`, { method: "POST" }); if (!response.ok) throw new Error("Session creation failed"); return (await response.json()).sessionId; }
 function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),
@@ -73,13 +82,13 @@ async function main() {
   try {
     await waitForHealth();
     await expectStatus(await fetch(`${baseUrl}/api/jobs?id=not-a-job-id`), 404, "invalid job lookup");
-    const invalidSession = randomUUID();
+    const invalidSession = await newSession();
     await expectStatus(await upload(invalidSession, 1, "not a video", "text/plain"), 400, "invalid MIME validation");
     await expectStatus(await upload(invalidSession, 1, new Uint8Array(0)), 400, "empty file validation");
     await expectStatus(await upload(invalidSession, 1, new Uint8Array(1_048_577)), 400, "oversized file validation");
     await expectStatus(await upload(invalidSession, 1, "corrupt bytes"), 400, "corrupt file validation");
 
-    const sessionId = randomUUID();
+    const sessionId = await newSession();
     const firstClip = await readFile(path.join(process.cwd(), "public", "samples", "shot-1.mp4"));
     await expectStatus(await upload(sessionId, 1, firstClip), 200, "valid first upload");
     const incomplete = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: "retro-cam" }) });
@@ -106,7 +115,19 @@ async function main() {
     const asset = firstOutput.outputUrl.split("/").at(-1)!;
     const metadata = await probeVideo(path.join(sessionDirectory(sessionId), asset));
     if (metadata.codecName !== "h264" || metadata.width !== 720 || metadata.height !== 1280 || metadata.duration <= 0) throw new Error(`Unexpected API export metadata: ${JSON.stringify(metadata)}`);
-    await expectStatus(await fetch(`${baseUrl}/api/reels/${randomUUID()}/${asset}`), 404, "unguessable-session protection");
+    await expectStatus(await fetch(`${baseUrl}/api/reels/${randomUUID()}/${asset}`), 401, "unknown-session protection");
+    await expectStatus(await rawFetch(`${baseUrl}${firstOutput.outputUrl}`), 401, "known session without cookie denied");
+    await expectStatus(await rawFetch(`${baseUrl}/api/jobs?id=${firstJob.id}`), 401, "known job without cookie denied");
+    const range = await fetch(`${baseUrl}${firstOutput.outputUrl}`, { headers: { Range: "bytes=0-99" } });
+    await expectStatus(range, 206, "MP4 range playback");
+    if ((await range.arrayBuffer()).byteLength !== 100) throw new Error("Incorrect byte range");
+    const retrieval = await fetch(`${baseUrl}/api/retrieval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: firstJob.id }) });
+    await expectStatus(retrieval, 200, "create retrieval"); const { token } = await retrieval.json();
+    const link = await rawFetch(`${baseUrl}/api/retrieval/${token}`); await expectStatus(link, 200, "separate-browser retrieval");
+    const linkData = await link.json(); if (JSON.stringify(linkData).includes(sessionId)) throw new Error("Retrieval leaked private session");
+    const retrievedMedia = await rawFetch(`${baseUrl}${linkData.mediaUrl}`); await expectStatus(retrievedMedia, 200, "retrieval MP4"); await retrievedMedia.arrayBuffer();
+    await expectStatus(await fetch(`${baseUrl}/api/retrieval`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }), 200, "revoke retrieval");
+    await expectStatus(await rawFetch(`${baseUrl}/api/retrieval/${token}`), 410, "revoked retrieval denied");
 
     const secondJob = await createJob(sessionId, "movie-trailer", "API regenerated test");
     const secondOutput = await waitForJob(secondJob.id);
