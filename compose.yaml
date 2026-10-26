@@ -16,6 +16,8 @@ services:
       MAX_CLIP_DURATION: "90"
       RETENTION_HOURS: "24"
       ENABLE_LEADERBOARD: ${ENABLE_LEADERBOARD:-false}
+      # This image has no transcription environment; podcast mode stays off unless one is added and verified.
+      PODCAST_MODE: ${PODCAST_MODE:-off}
     volumes:
       - studio_data:/app/data
     expose:
