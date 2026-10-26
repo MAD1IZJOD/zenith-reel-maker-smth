@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { assertSessionId, cleanupExpiredSessions, ensureSession } from "@/lib/storage/session-storage";
@@ -18,16 +19,18 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) throw new Error("Choose a video file.");
     if (!supported.has(file.type) || file.size === 0 || file.size > maxBytes) throw new Error(`Upload a supported video under ${Math.round(maxBytes / 1024 / 1024)} MB.`);
     const directory = await ensureSession(sessionId);
-    const temporary = path.join(directory, `incoming-${shot}.video`);
-    await writeFile(temporary, Buffer.from(await file.arrayBuffer()));
-    const metadata = await probeVideo(temporary);
-    const formats = metadata.formatName.split(",");
-    if (!formats.some((format) => ["mov", "mp4", "webm", "matroska", "3gp", "3g2"].includes(format))) throw new Error("This file is not a supported MP4, WebM, MOV, or 3GP video.");
-    const finalPath = path.join(directory, `shot-${shot}.mp4`);
-    await writeFile(finalPath, await (await import("node:fs/promises")).readFile(temporary));
-    await (await import("node:fs/promises")).unlink(temporary);
-    void cleanupExpiredSessions();
-    return NextResponse.json({ shot, metadata, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4` });
+    const temporary = path.join(directory, `incoming-${shot}-${randomUUID()}.video`);
+    try {
+      await writeFile(temporary, Buffer.from(await file.arrayBuffer()));
+      const metadata = await probeVideo(temporary);
+      const formats = metadata.formatName.split(",");
+      if (!formats.some((format) => ["mov", "mp4", "webm", "matroska", "3gp", "3g2"].includes(format))) throw new Error("This file is not a supported MP4, WebM, MOV, or 3GP video.");
+      const finalPath = path.join(directory, `shot-${shot}.mp4`);
+      await rm(finalPath, { force: true });
+      await rename(temporary, finalPath);
+      void cleanupExpiredSessions();
+      return NextResponse.json({ shot, metadata, previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4` });
+    } finally { await rm(temporary, { force: true }); }
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Upload failed." }, { status: 400 });
   }

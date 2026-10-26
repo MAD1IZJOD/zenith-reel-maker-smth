@@ -8,9 +8,10 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/presets/presets.test.ts",
+    "test": "tsx --test src/lib/presets/presets.test.ts && tsx scripts/verify-render.ts",
     "generate:samples": "node scripts/generate-samples.mjs",
-    "smoke:render": "tsx scripts/render-smoke.ts"
+    "smoke:render": "tsx scripts/render-smoke.ts",
+    "verify:render": "tsx scripts/verify-render.ts"
   },
   "dependencies": {
     "@types/node": "^22.15.3",
