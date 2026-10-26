@@ -31,13 +31,17 @@ function framing(edl: EditDecisionList, segment: EdlSegment, index: number, qual
   const flags = quality ? "lanczos" : "bicubic";
   const amount = 0.065;
   const label = `s${index}`;
+  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
   let chain: string;
   if (segment.crop === "fit-blur") {
-    const aspect = source.width / source.height;
+    const aspect = source.width! / source.height!;
     const fgHeight = Math.min(H, Math.max(Math.round(W / aspect), Math.round(H * 0.4)));
-    const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
     const bgW = even(W / 8), bgH = even(H / 8);
     chain = `split=2[${label}b][${label}f];[${label}b]scale=${bgW}:${bgH}:force_original_aspect_ratio=increase,crop=${bgW}:${bgH},boxblur=5:2,scale=${W}:${H}:flags=bicubic,eq=brightness=-0.08:saturation=0.78[${label}bg];[${label}f]scale=-2:${even(fgHeight)}:flags=${flags},crop='min(iw,${W})':ih:(iw-ow)*${num(segment.focusX)}:0[${label}fg];[${label}bg][${label}fg]overlay=(W-w)/2:(H-h)/2`;
+  } else if (segment.crop === "abstract") {
+    // Faceless: the footage reduced to a 1/16-scale, heavily blurred colour field. No person is recognisable.
+    const smallW = even(W / 16), smallH = even(H / 16);
+    chain = `scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},boxblur=4:3,scale=${W}:${H}:flags=bicubic,eq=brightness=-0.08:saturation=0.7`;
   } else {
     chain = `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=${flags},crop=${W}:${H}:(iw-ow)*${num(segment.focusX)}:(ih-oh)/2`;
   }
@@ -56,30 +60,45 @@ function framing(edl: EditDecisionList, segment: EdlSegment, index: number, qual
   return chain;
 }
 
+/** Original, slowly moving gradient backgrounds for faceless compositions (no third-party imagery). */
+const GRADIENTS: Record<Exclude<EditDecisionList["composition"], "video">, string> = {
+  minimal: "c0=0x1A2030:c1=0x2A3550:c2=0x141821:nb_colors=3:speed=0.006:seed=11",
+  cinematic: "c0=0x30231A:c1=0x56402C:c2=0x1A3034:nb_colors=3:speed=0.005:seed=23",
+  broll: "c0=0x2A2258:c1=0x164C52:c2=0x3A2050:c3=0x1A1A34:nb_colors=4:speed=0.012:seed=5",
+};
+
 export function compileEdl(edl: EditDecisionList, context: CompileContext): string[] {
   const quality = edl.profile === "quality";
   const total = edlDuration(edl);
   const { width: W, height: H, fps } = edl.canvas;
   const args: string[] = ["-y", "-v", "error", "-nostdin"];
   const graph: string[] = [];
+  const framesFromSource = edl.composition === "video" || (edl.composition === "cinematic" && edl.segments.every((segment) => segment.crop === "abstract"));
 
-  // One input per segment, trimmed at the demuxer so only the needed source is decoded.
+  // One input per segment, trimmed at the demuxer so only the needed source is decoded; then b-roll; then music.
+  let inputs = 0;
   edl.segments.forEach((segment) => {
     const path = context.sourcePaths[segment.source];
     if (!path) throw new Error("Edit references a missing source.");
-    args.push("-ss", num(segment.start), "-t", num(sourceSeconds(segment) + 0.1), "-i", path);
+    args.push("-ss", num(segment.start), "-t", num(sourceSeconds(segment) + 0.1), "-i", path); inputs++;
   });
+  const brollInputs = edl.composition === "broll" ? edl.broll.map((piece) => {
+    const path = context.sourcePaths[piece.source];
+    if (!path) throw new Error("B-roll references a missing source.");
+    args.push("-ss", num(piece.start), "-t", num(piece.duration + 0.1), "-i", path);
+    return inputs++;
+  }) : [];
   const music = edl.audio.mode === "soundtrack" || edl.audio.mode === "mix";
   if (music) {
     if (!context.musicPath) throw new Error("Soundtrack unavailable.");
     args.push("-stream_loop", "-1", "-i", context.musicPath);
   }
-  const musicInput = edl.segments.length;
+  const musicInput = inputs;
   const useOriginal = edl.audio.mode === "original" || edl.audio.mode === "mix";
 
   edl.segments.forEach((segment, index) => {
     const D = num(segment.duration);
-    graph.push(`[${index}:v]setpts=(PTS-STARTPTS)/${num(segment.speed)},fps=${fps},${framing(edl, segment, index, quality)},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${D},trim=duration=${D},setpts=PTS-STARTPTS,settb=AVTB[v${index}]`);
+    if (framesFromSource) graph.push(`[${index}:v]setpts=(PTS-STARTPTS)/${num(segment.speed)},fps=${fps},${framing(edl, segment, index, quality)},setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${D},trim=duration=${D},setpts=PTS-STARTPTS,settb=AVTB[v${index}]`);
     const hasAudio = useOriginal && edl.sources[segment.source].hasAudio;
     graph.push(hasAudio
       ? `[${index}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo${segment.speed !== 1 ? `,atempo=${num(segment.speed)}` : ""},apad,atrim=duration=${D},asetpts=PTS-STARTPTS[a${index}]`
@@ -91,22 +110,35 @@ export function compileEdl(edl: EditDecisionList, context: CompileContext): stri
   edl.transitions.forEach((transition, index) => {
     const next = index + 1, outV = `jv${next}`, outA = `ja${next}`;
     if (transition.type === "cut" || transition.type === "flash") {
-      graph.push(`[${video}][v${next}]concat=n=2:v=1:a=0,settb=AVTB[${outV}]`, `[${audio}][a${next}]concat=n=2:v=0:a=1[${outA}]`);
+      if (framesFromSource) graph.push(`[${video}][v${next}]concat=n=2:v=1:a=0,settb=AVTB[${outV}]`);
+      graph.push(`[${audio}][a${next}]concat=n=2:v=0:a=1[${outA}]`);
     } else {
-      graph.push(`[${video}][v${next}]xfade=transition=${XFADE[transition.type]}:duration=${num(transition.duration)}:offset=${num(length - transition.duration)}[${outV}]`, `[${audio}][a${next}]acrossfade=d=${num(transition.duration)}:c1=tri:c2=tri[${outA}]`);
+      if (framesFromSource) graph.push(`[${video}][v${next}]xfade=transition=${XFADE[transition.type]}:duration=${num(transition.duration)}:offset=${num(length - transition.duration)}[${outV}]`);
+      graph.push(`[${audio}][a${next}]acrossfade=d=${num(transition.duration)}:c1=tri:c2=tri[${outA}]`);
     }
     length += edl.segments[next].duration - transition.duration;
     video = outV; audio = outA;
   });
 
-  // Look: accents, then one consistent grade over the whole timeline, then optional texture.
-  const accents = edl.accents.map((time) => `if(between(t,${num(time)},${num(time + 0.14)}),0.3*(1-(t-${num(time)})/0.14),0)`);
-  const look = [accents.length ? `eq=brightness='${accents.join("+")}':eval=frame` : "", gradeFilter(edl.grade, quality), quality ? "unsharp=5:5:0.35" : ""].filter(Boolean).join(",");
-  const fonts = filterPath(context.fontsDir);
-  graph.push(`[${video}]${look},split=2[graded][coverbase]`);
-  graph.push(`[graded]subtitles=filename='${filterPath(context.videoAss)}':fontsdir='${fonts}',trim=duration=${num(total)},setpts=PTS-STARTPTS[vout]`);
-  const frames = edl.cover.times.map((time) => Math.max(0, Math.min(Math.round(time * fps), Math.round(total * fps) - 2)));
-  graph.push(`[coverbase]select='${frames.map((frame) => `eq(n,${frame})`).join("+")}',subtitles=filename='${filterPath(context.coverAss)}':fontsdir='${fonts}'[cover]`);
+  if (!framesFromSource) {
+    if (brollInputs.length) {
+      // The visitor's own b-roll, framed to fill the screen, softened so captions stay readable, dissolving between clips.
+      brollInputs.forEach((input, index) => {
+        const piece = edl.broll[index];
+        graph.push(`[${input}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${W}:${H}:force_original_aspect_ratio=increase:flags=bicubic,crop=${W}:${H},eq=brightness=-0.1:saturation=0.92,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=${num(piece.duration)},trim=duration=${num(piece.duration)},setpts=PTS-STARTPTS,settb=AVTB[r${index}]`);
+      });
+      video = "r0";
+      let offset = edl.broll[0].duration;
+      for (let index = 1; index < brollInputs.length; index++) {
+        graph.push(`[${video}][r${index}]xfade=transition=fade:duration=0.4:offset=${num(offset - 0.4)}[rj${index}]`);
+        video = `rj${index}`; offset += edl.broll[index].duration - 0.4;
+      }
+      graph.push(`[${video}]tpad=stop_mode=clone:stop_duration=${num(total)},trim=duration=${num(total)},setpts=PTS-STARTPTS[bg]`);
+    } else {
+      graph.push(`gradients=s=${W}x${H}:r=${fps}:d=${num(total + 0.2)}:${GRADIENTS[edl.composition as keyof typeof GRADIENTS]},format=yuv420p,noise=alls=3:allf=t,setsar=1,trim=duration=${num(total)},setpts=PTS-STARTPTS[bg]`);
+    }
+    video = "bg";
+  }
 
   // Sound: original speech, licensed music ducked under it, then fades, loudness and a peak limiter.
   const fadeOutStart = Math.max(0, total - edl.audio.fadeOut);
@@ -117,10 +149,32 @@ export function compileEdl(edl: EditDecisionList, context: CompileContext): stri
     else graph.push(`[${audio}][mus]amix=inputs=2:duration=first:normalize=0[mixed]`);
     mixed = "mixed";
   } else if (edl.audio.mode === "soundtrack") { graph.push(`[${audio}]anullsink`); mixed = "mus"; } else mixed = audio;
-  const master = edl.audio.mode === "muted"
-    ? `[${mixed}]atrim=duration=${num(total)}[aout]`
-    : `[${mixed}]atrim=duration=${num(total)},afade=t=in:d=${num(edl.audio.fadeIn)},afade=t=out:st=${num(fadeOutStart)}:d=${num(edl.audio.fadeOut)},loudnorm=I=${edl.audio.loudness}:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.89:level=false[aout]`;
-  graph.push(master);
+  const masterChain = edl.audio.mode === "muted"
+    ? `[${mixed}]atrim=duration=${num(total)}`
+    : `[${mixed}]atrim=duration=${num(total)},afade=t=in:d=${num(edl.audio.fadeIn)},afade=t=out:st=${num(fadeOutStart)}:d=${num(edl.audio.fadeOut)},loudnorm=I=${edl.audio.loudness}:TP=-1.5:LRA=11,aresample=48000,alimiter=limit=0.89:level=false`;
+  graph.push(edl.waveform ? `${masterChain},asplit=2[aout][wavein]` : `${masterChain}[aout]`);
+
+  // Look: accents, one consistent grade, texture; covers branch off before waveform, progress bar and text.
+  const accents = edl.accents.map((time) => `if(between(t,${num(time)},${num(time + 0.14)}),0.3*(1-(t-${num(time)})/0.14),0)`);
+  const vignette = edl.composition === "cinematic" ? "vignette=PI/4.5" : "";
+  const look = [accents.length ? `eq=brightness='${accents.join("+")}':eval=frame` : "", gradeFilter(edl.grade, quality), vignette, quality ? "unsharp=5:5:0.35" : ""].filter(Boolean).join(",");
+  const fonts = filterPath(context.fontsDir);
+  graph.push(`[${video}]${look},split=2[graded][coverbase]`);
+  let main = "graded";
+  if (edl.waveform) {
+    // Drawn from the reel's real audio: the waveform moves only when sound is present.
+    const waveW = Math.round((W * 0.76) / 2) * 2, waveH = Math.round((H * 0.07) / 2) * 2;
+    graph.push(`[wavein]showwaves=s=${waveW}x${waveH}:mode=cline:rate=${fps}:colors=0xC4F46D@0.8:scale=sqrt:draw=full,format=yuva420p[wave]`, `[${main}][wave]overlay=(W-w)/2:${Math.round(H * 0.7)}:eof_action=pass[waved]`);
+    main = "waved";
+  }
+  if (edl.progressBar) {
+    const barY = Math.round(H * 0.06), barH = Math.max(4, Math.round(H * 0.004)), barX = Math.round(W * 0.08), barW = Math.round(W * 0.84);
+    graph.push(`[${main}]drawbox=x=${barX}:y=${barY}:w=${barW}:h=${barH}:color=white@0.22:t=fill,drawbox=x=${barX}:y=${barY}:w='max(1,${barW}*min(t/${num(total)},1))':h=${barH}:color=0xC4F46D@0.95:t=fill[barred]`);
+    main = "barred";
+  }
+  graph.push(`[${main}]subtitles=filename='${filterPath(context.videoAss)}':fontsdir='${fonts}',trim=duration=${num(total)},setpts=PTS-STARTPTS[vout]`);
+  const frames = edl.cover.times.map((time) => Math.max(0, Math.min(Math.round(time * fps), Math.round(total * fps) - 2)));
+  graph.push(`[coverbase]select='${frames.map((frame) => `eq(n,${frame})`).join("+")}',subtitles=filename='${filterPath(context.coverAss)}':fontsdir='${fonts}'[cover]`);
 
   const threads = String(context.threads ?? 4);
   const encoder = context.encoder ?? "libx264";

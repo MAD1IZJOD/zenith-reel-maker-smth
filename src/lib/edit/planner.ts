@@ -3,7 +3,7 @@ import type { CreativeOptions } from "@/lib/creative/options";
 import { createTimeline } from "@/lib/creative/timeline";
 import type { ShotActivity } from "@/lib/video/shot-analysis-types";
 import { groupWords, type TimedWord } from "@/lib/captions/grouping";
-import { EDL_VERSION, parseEdl, type EditDecisionList, type EdlInput } from "./edl";
+import { cleanOverlayText, EDL_VERSION, parseEdl, type EditDecisionList, type EdlInput } from "./edl";
 import { RECIPES, TRANSITION_SECONDS, type CaptionStyleId, type CropMode, type ExportProfile, type TitleStyle } from "./styles";
 
 export type PlannerClip = { duration: number; width: number; height: number; hasAudio: boolean; activity?: ShotActivity };
@@ -117,29 +117,78 @@ export function planClipEdit({ preset, options, title, clips, transcripts }: Cli
   return parseEdl(edl);
 }
 
+export const VISUAL_STYLES = ["minimal", "cinematic", "broll", "speaker"] as const;
+export type VisualStyle = typeof VISUAL_STYLES[number];
+export type PodcastSource = { duration: number; width?: number; height?: number; hasVideo: boolean; hasAudio: boolean };
+export type PodcastReelInput = {
+  source: PodcastSource; start: number; end: number; words: TimedWord[]; title: string; hook: string;
+  visual: VisualStyle; captionStyle: CaptionStyleId; profile: ExportProfile;
+  music?: { musicId: "pulse" | "drift"; gain?: number };
+  /** Visitor-provided b-roll clips (their own footage) for the "broll" style. */
+  broll?: PodcastSource[];
+  /** Spoken keywords for the motion-graphic fallback when no b-roll is available. */
+  keywords?: string[];
+};
+
+/**
+ * One reel from one highlight. Faceless styles never need the speaker on screen: Minimal (gradient + real waveform),
+ * Cinematic (abstract colour field from the footage, or a gradient for audio-only sources) and B-roll (the visitor's
+ * own clips, else spoken keywords as motion graphics). "speaker" frames the original video.
+ */
+export function planPodcastReel(input: PodcastReelInput): EditDecisionList {
+  const duration = round(input.end - input.start);
+  const words = input.words.filter((word) => word.start >= input.start - 0.01 && word.end <= input.end + 0.01).map((word) => ({ text: word.text, start: round(Math.max(0, word.start - input.start)), end: round(Math.min(duration, word.end - input.start)) }));
+  const visual = input.visual === "speaker" && !input.source.hasVideo ? "minimal" : input.visual;
+  const composition = visual === "speaker" ? "video" : visual;
+  const brollClips = visual === "broll" ? (input.broll || []).filter((clip) => clip.hasVideo && clip.width && clip.height && clip.duration >= 1.5) : [];
+  const sources = [input.source, ...brollClips].map((clip) => ({ duration: clip.duration, width: clip.width, height: clip.height, hasVideo: clip.hasVideo, hasAudio: clip.hasAudio }));
+  const crop: EdlInput["segments"][number]["crop"] = visual === "speaker" ? cropFor({ width: input.source.width!, height: input.source.height! }) : visual === "cinematic" && input.source.hasVideo ? "abstract" : "cover";
+  const motion = visual === "speaker" ? (duration > 12 ? "none" as const : "push-in" as const) : visual === "cinematic" && input.source.hasVideo ? "push-in" as const : "none" as const;
+
+  // B-roll pieces of about four seconds, cycling through the visitor's clips, starting a little into each clip.
+  const broll: EdlInput["broll"] = [];
+  if (brollClips.length) {
+    let covered = 0, index = 0;
+    while (covered < duration && broll.length < 24) {
+      const clip = brollClips[index % brollClips.length];
+      const length = round(Math.min(4.4, Math.max(1.5, clip.duration - 0.2)));
+      const pass = Math.floor(index / brollClips.length);
+      const start = round(Math.min(Math.max(0, clip.duration - length), (0.3 + pass * length) % Math.max(0.3, clip.duration - length)));
+      broll.push({ source: 1 + (index % brollClips.length), start, duration: length });
+      covered += length - 0.4; index++;
+    }
+  }
+
+  const hook = cleanOverlayText(input.hook, 60) || "Listen to this";
+  const title = cleanOverlayText(input.title, 60) || hook;
+  const hookEnd = round(Math.min(2.8, Math.max(1.4, duration * 0.18)));
+  const overlays: EdlInput["overlays"] = title.toLowerCase() === hook.toLowerCase()
+    ? [{ role: "headline", text: title, start: 0.05, end: round(duration - 0.05) }]
+    : [{ role: "hook", text: hook, start: 0.05, end: hookEnd }, { role: "headline", text: title, start: round(hookEnd + 0.15), end: round(duration - 0.05) }];
+  if (visual === "broll" && !brollClips.length) {
+    const terms = (input.keywords || []).filter(Boolean).slice(0, 4);
+    terms.forEach((term, index) => { const span = duration / terms.length; overlays.push({ role: "backdrop", text: term, start: round(index * span), end: round(Math.min(duration, (index + 1) * span + 0.4)) }); });
+  }
+  const mode = input.source.hasAudio ? (input.music ? "mix" : "original") : input.music ? "soundtrack" : "muted";
+  const style = { minimal: { grade: "clean-neutral", title: "poster" }, cinematic: { grade: "warm-film", title: "editorial" }, broll: { grade: "contrast-editorial", title: "poster" }, speaker: { grade: "clean-neutral", title: "poster" } }[visual] as { grade: EditDecisionList["grade"]; title: TitleStyle };
+  return parseEdl({
+    version: EDL_VERSION, presetId: `podcast-${visual}`, profile: input.profile, canvas: CANVAS[input.profile], sources,
+    segments: [{ source: 0, start: round(input.start), duration, speed: 1, crop, focusX: 0.5, motion }],
+    transitions: [], grade: style.grade, titleStyle: style.title, captionStyle: input.captionStyle, overlays,
+    captions: captionGroups(words, input.captionStyle, duration),
+    composition, captionPosition: composition === "video" ? "lower" : "center", broll, waveform: visual === "minimal", progressBar: composition !== "video",
+    audio: { mode, musicId: input.music?.musicId, musicGain: input.music?.gain ?? 0.16, duck: mode === "mix", fadeIn: 0.12, fadeOut: 0.6, loudness: -14 },
+    cover: { times: [round(Math.min(1.2, duration * 0.1)), round(duration * 0.5), round(Math.max(0.5, duration - 1))], selected: 0, title },
+  });
+}
+
 export type HighlightPlanInput = {
   presetId?: string; source: PlannerClip; start: number; end: number; words: TimedWord[];
   hook: string; captionStyle: CaptionStyleId; titleStyle?: TitleStyle; profile: ExportProfile;
   grade?: EditDecisionList["grade"]; music?: { musicId: "pulse" | "drift"; gain?: number };
 };
 
-/**
- * A single continuous highlight from a long source (podcast, talk, interview) with word-timed captions.
- * This is the Stage 2 building block: the three-reel workflow chooses windows; this turns one into an edit.
- */
+/** Speaker-framed highlight (kept for existing callers); see planPodcastReel for the faceless styles. */
 export function planHighlightEdit(input: HighlightPlanInput): EditDecisionList {
-  const duration = round(input.end - input.start);
-  const words = input.words.filter((word) => word.start >= input.start - 0.01 && word.end <= input.end + 0.01).map((word) => ({ text: word.text, start: round(word.start - input.start), end: round(word.end - input.start) }));
-  const hookEnd = round(Math.min(2.6, duration / 3));
-  const mode = input.source.hasAudio ? (input.music ? "mix" : "original") : input.music ? "soundtrack" : "muted";
-  return parseEdl({
-    version: EDL_VERSION, presetId: input.presetId || "highlight", profile: input.profile, canvas: CANVAS[input.profile],
-    sources: [{ duration: input.source.duration, width: input.source.width, height: input.source.height, hasAudio: input.source.hasAudio }],
-    segments: [{ source: 0, start: round(input.start), duration, speed: 1, crop: cropFor(input.source), focusX: 0.5, motion: duration > 12 ? "none" : "push-in" }],
-    transitions: [], grade: input.grade || "clean-neutral", titleStyle: input.titleStyle || "poster", captionStyle: input.captionStyle,
-    overlays: [{ role: "hook", text: input.hook, start: 0.05, end: hookEnd }],
-    captions: captionGroups(words, input.captionStyle, duration),
-    audio: { mode, musicId: input.music?.musicId, musicGain: input.music?.gain ?? 0.22, duck: mode === "mix", fadeIn: 0.1, fadeOut: 0.6, loudness: -14 },
-    cover: { times: [round(Math.min(1, duration * 0.1)), round(duration * 0.5), round(duration - 0.5)], selected: 0, title: input.hook },
-  });
+  return planPodcastReel({ source: { ...input.source, hasVideo: true }, start: input.start, end: input.end, words: input.words, title: input.hook, hook: input.hook, visual: "speaker", captionStyle: input.captionStyle, profile: input.profile, music: input.music });
 }

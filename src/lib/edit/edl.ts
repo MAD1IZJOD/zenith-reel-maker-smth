@@ -20,17 +20,22 @@ const seconds = (maximum: number) => z.number().finite().min(0).max(maximum);
 
 export const sourceClipSchema = z.object({
   duration: z.number().finite().min(0.3).max(14_400),
-  width: z.number().int().min(16).max(8192),
-  height: z.number().int().min(16).max(8192),
+  /** Audio-only sources (podcasts without video) have no frame size. */
+  width: z.number().int().min(16).max(8192).optional(),
+  height: z.number().int().min(16).max(8192).optional(),
+  hasVideo: z.boolean().default(true),
   hasAudio: z.boolean(),
 });
+/** "video" frames the source footage; the others are faceless compositions that never need the speaker on screen. */
+export const COMPOSITIONS = ["video", "minimal", "cinematic", "broll"] as const;
+export type Composition = typeof COMPOSITIONS[number];
 
 export const segmentSchema = z.object({
   source: z.number().int().min(0).max(MAX_SEGMENTS - 1),
   start: seconds(14_400),
   duration: z.number().finite().min(0.4).max(90),
   speed: z.number().finite().min(0.75).max(1.5).default(1),
-  crop: z.enum(CROP_MODES),
+  crop: z.enum([...CROP_MODES, "abstract"]),
   /** Horizontal crop centre for cover framing, 0 = left edge, 1 = right edge. */
   focusX: z.number().finite().min(0).max(1).default(0.5),
   motion: z.enum(MOTIONS),
@@ -39,7 +44,7 @@ export const segmentSchema = z.object({
 export const transitionSchema = z.object({ type: z.enum(TRANSITIONS), duration: z.number().finite().min(0).max(1) });
 
 export const textOverlaySchema = z.object({
-  role: z.enum(["hook", "card", "closing", "badge"]),
+  role: z.enum(["hook", "card", "closing", "badge", "headline", "backdrop"]),
   text: text(60),
   start: seconds(MAX_OUTPUT_SECONDS),
   end: seconds(MAX_OUTPUT_SECONDS),
@@ -74,6 +79,12 @@ export const edlSchema = z.object({
   /** Flash accents at output times, used for beat accents and flash cuts. */
   accents: z.array(seconds(MAX_OUTPUT_SECONDS)).max(32).default([]),
   frameOverlay: z.enum(["none", "camcorder"]).default("none"),
+  composition: z.enum(COMPOSITIONS).default("video"),
+  captionPosition: z.enum(["lower", "center"]).default("lower"),
+  /** Visitor-provided b-roll pieces for the "broll" composition, laid end to end on the output timeline. */
+  broll: z.array(z.object({ source: z.number().int().min(0).max(MAX_SEGMENTS - 1), start: seconds(14_400), duration: z.number().finite().min(1).max(30) })).max(24).default([]),
+  waveform: z.boolean().default(false),
+  progressBar: z.boolean().default(false),
   audio: audioPlanSchema,
   cover: z.object({ times: z.array(seconds(MAX_OUTPUT_SECONDS)).length(3), selected: z.union([z.literal(0), z.literal(1), z.literal(2)]), title: text(60) }),
 }).superRefine((edl, context) => {
@@ -84,7 +95,15 @@ export const edlSchema = z.object({
     const source = edl.sources[segment.source];
     if (!source) { issue(`Segment ${index + 1} references a missing source.`); continue; }
     if (segment.start > Math.max(0, source.duration - 0.3)) issue(`Segment ${index + 1} starts after its source ends.`);
+    const usesFrames = edl.composition === "video" || (edl.composition === "cinematic" && segment.crop === "abstract");
+    if (usesFrames && (!source.hasVideo || !source.width || !source.height)) issue(`Segment ${index + 1} needs video frames its source does not have.`);
   }
+  for (const piece of edl.broll) {
+    const source = edl.sources[piece.source];
+    if (!source || !source.hasVideo || !source.width || !source.height) issue("B-roll must come from a video source.");
+    else if (piece.start > Math.max(0, source.duration - 0.5)) issue("B-roll starts after its clip ends.");
+  }
+  if (edl.broll.length && edl.composition !== "broll") issue("B-roll pieces belong to the b-roll composition.");
   for (const [index, transition] of edl.transitions.entries()) {
     const shortest = Math.min(edl.segments[index]?.duration ?? 0, edl.segments[index + 1]?.duration ?? 0);
     if (transition.type === "cut" || transition.type === "flash" ? transition.duration !== 0 : transition.duration <= 0 || transition.duration > shortest / 2) issue(`Transition ${index + 1} has an invalid duration.`);

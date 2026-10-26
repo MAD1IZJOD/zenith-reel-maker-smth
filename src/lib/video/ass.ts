@@ -74,15 +74,19 @@ export function buildAss(edl: EditDecisionList, mode: "video" | "cover"): string
   const look = CAPTION_LOOKS[edl.captionStyle];
   const title = TITLE_LOOKS[edl.titleStyle];
   const captionSize = look.size * k, titleSize = title.size * k;
-  const captionAlign = look.align === "left" ? 1 : 2;
+  // Faceless layouts have no subject to avoid, so captions sit at the visual centre; video keeps them low.
+  const centered = edl.captionPosition === "center";
+  const captionAlign = centered ? (look.align === "left" ? 4 : 5) : look.align === "left" ? 1 : 2;
   const titleAlign = title.align === "left" ? 7 : 8;
   const lines: string[] = [
     "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${width}`, `PlayResY: ${height}`, "WrapStyle: 2", "ScaledBorderAndShadow: yes", "YCbCr Matrix: TV.709", "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    style("Caption", look.font, captionSize, look.primary, look.highlight, look.box ? look.back : "&H00000000", look.back, look.box ? 3 : 1, (look.box ? look.outline || 14 : look.outline) * k, look.shadow * k, captionAlign, side, side, height * look.bottom, look.spacing * k),
+    style("Caption", look.font, captionSize, look.primary, look.highlight, look.box ? look.back : "&H00000000", look.back, look.box ? 3 : 1, (look.box ? look.outline || 14 : look.outline) * k, look.shadow * k, captionAlign, side, side, centered ? 0 : height * look.bottom, look.spacing * k),
     style("Title", title.font, titleSize, "&H00FFFFFF", "&H00FFFFFF", "&H50000000", "&H8C000000", 1, 3 * k, 3 * k, titleAlign, side, side, height * title.y, edl.titleStyle === "poster" ? 2 * k : 0),
     style("Badge", FONTS.vt, 84 * k, "&H00E8F4FF", "&H00E8F4FF", "&H64000000", "&H00000000", 1, 1.5 * k, 0, 7, side, side, height * 0.075, 2 * k),
+    style("Headline", title.font, titleSize * 0.56, "&H00FFFFFF", "&H00FFFFFF", "&H50000000", "&H8C000000", 1, 2 * k, 2 * k, 8, side, side, height * 0.1, edl.titleStyle === "poster" ? 1.5 * k : 0),
+    style("Backdrop", FONTS.anton, 250 * k, "&HE6FFFFFF", "&HE6FFFFFF", "&HFF000000", "&HFF000000", 1, 0, 0, 5, 0, 0, 0, 4 * k),
     "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ];
   const event = (layer: number, start: number, end: number, styleName: string, body: string) => lines.push(`Dialogue: ${layer},${assTime(start)},${assTime(end)},${styleName},,0,0,0,,${body}`);
@@ -102,6 +106,22 @@ export function buildAss(edl: EditDecisionList, mode: "video" | "cover"): string
   for (const overlay of edl.overlays) {
     const duration = overlay.end - overlay.start;
     const fadeIn = Math.min(220, Math.round(duration * 250)), fadeOut = Math.min(260, Math.round(duration * 250));
+    if (overlay.role === "headline") {
+      // Persistent reel title: the speaker's own words, small enough to stay out of the captions' way.
+      const words = titleText(overlay.text).split(" ");
+      const wrapped = wrapWords(words, title.align === "left" ? 26 : 20).map((line) => line.join(" "));
+      const scale = fitScale(wrapped, title.font, titleSize * 0.56, width, false);
+      event(1, overlay.start, overlay.end, "Headline", `{\\fad(${fadeIn},${fadeOut})\\fscx${scale}\\fscy${scale}}${wrapped.join("\\N")}`);
+      continue;
+    }
+    if (overlay.role === "backdrop") {
+      // Motion-graphic fallback: a spoken keyword drifting huge and faint behind the captions. Purely decorative.
+      const index = edl.overlays.filter((item) => item.role === "backdrop").indexOf(overlay);
+      const y = Math.round(height * (index % 2 ? 0.32 : 0.62)), drift = Math.round(width * 0.12);
+      const scale = fitScale([assText(overlay.text).toUpperCase()], FONTS.anton, 250 * k, width * 1.25, false);
+      event(0, overlay.start, overlay.end, "Backdrop", `{\\an5\\fad(500,500)\\fscx${scale}\\fscy${scale}\\move(${width / 2 + drift},${y},${width / 2 - drift},${y})}${assText(overlay.text).toUpperCase()}`);
+      continue;
+    }
     if (overlay.role === "badge") { event(2, overlay.start, overlay.end, "Badge", `{\\c&H003C3CF0&}●{\\c&H00E8F4FF&} ${assText(overlay.text)}`); continue; }
     if (overlay.role === "card") {
       const words = assText(overlay.text).split(" ");

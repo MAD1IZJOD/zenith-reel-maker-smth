@@ -21,17 +21,19 @@ export async function inspectExport(file: string, edl: EditDecisionList) {
   const probe = JSON.parse(await runProcess(ffprobe(), ["-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height,sample_aspect_ratio,r_frame_rate:format=duration", "-of", "json", file], "Export probe")) as { streams: { codec_type: string; codec_name: string; width?: number; height?: number; sample_aspect_ratio?: string; r_frame_rate?: string }[]; format: { duration: string } };
   const video = probe.streams.find((stream) => stream.codec_type === "video")!, audio = probe.streams.find((stream) => stream.codec_type === "audio");
   const black = await runProcess(ffmpeg(), ["-v", "error", "-i", file, "-an", "-vf", "blackdetect=d=0.08:pix_th=0.08,metadata=mode=print:key=lavfi.black_start:file=-", "-f", "null", "-"], "Black frame scan");
-  const ending = lines(await runProcess(ffmpeg(), ["-v", "error", "-sseof", "-0.25", "-i", file, "-an", "-frames:v", "1", "-vf", "signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"], "Ending scan"), "lavfi.signalstats.YAVG")[0];
+  const endingStats = await runProcess(ffmpeg(), ["-v", "error", "-sseof", "-0.25", "-i", file, "-an", "-frames:v", "1", "-vf", "signalstats,metadata=mode=print:file=-", "-f", "null", "-"], "Ending scan");
+  const ending = lines(endingStats, "lavfi.signalstats.YAVG")[0], endingPeak = lines(endingStats, "lavfi.signalstats.YMAX")[0];
   const rms = audio ? lines(await runProcess(ffmpeg(), ["-v", "error", "-i", file, "-vn", "-af", "astats=metadata=1:reset=0:measure_perchannel=none,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], "Audio level scan"), "lavfi.astats.Overall.RMS_level").at(-1) : undefined;
   const result = {
     codec: video.codec_name, width: video.width, height: video.height, sar: video.sample_aspect_ratio, fps: video.r_frame_rate, audio: audio?.codec_name,
-    duration: Number(probe.format.duration), expected: edlDuration(edl), blackIntervals: lines(black, "lavfi.black_start").length, endingLuma: ending, audioRmsDb: rms,
+    duration: Number(probe.format.duration), expected: edlDuration(edl), blackIntervals: lines(black, "lavfi.black_start").length, endingLuma: ending, endingPeakLuma: endingPeak, audioRmsDb: rms,
   };
   assert.equal(result.codec, "h264"); assert.equal(result.width, edl.canvas.width); assert.equal(result.height, edl.canvas.height);
   assert.ok(!result.sar || result.sar === "1:1", `pixel aspect ${result.sar}`); assert.equal(result.fps, "30/1"); assert.equal(result.audio, "aac");
   assert.ok(Math.abs(result.duration - result.expected) < 0.15, `duration ${result.duration} vs ${result.expected}`);
   assert.equal(result.blackIntervals, 0, "unexpected black frames");
-  assert.ok(result.endingLuma > 20, `blank ending (luma ${result.endingLuma})`);
+  // Blank means dark AND featureless; deliberately dark faceless designs still carry bright titles and captions.
+  assert.ok(result.endingLuma > 20 || result.endingPeakLuma > 120, `blank ending (luma ${result.endingLuma}, peak ${result.endingPeakLuma})`);
   if (edl.audio.mode !== "muted") assert.ok((rms ?? -120) > -45, `requested audio is silent (${rms} dB)`);
   return result;
 }
