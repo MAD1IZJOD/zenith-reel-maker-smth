@@ -106,12 +106,18 @@ async function main() {
     await expectStatus(clearedSession, 400, "cleared shot validation");
     await expectStatus(await upload(sessionId, 1, firstClip), 200, "re-upload after replacement");
     for (let shot = 2; shot <= 3; shot += 1) await expectStatus(await upload(sessionId, shot, await readFile(path.join(process.cwd(), "public", "samples", `shot-${shot}.mp4`))), 200, `valid upload ${shot}`);
+    for (const creative of [{ trimStarts: [89, 0, 0] }, { musicId: "../../private" }, { customSeconds: [1000, 2, 2] }, { shotOrder: [0, 0, 0] }, { coverFrame: 9 }]) {
+      const invalidEdit = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: "main-character", creative }) });
+      await expectStatus(invalidEdit, 400, "reject invalid editing specification");
+    }
     const draft = { presetId: "retro-cam", title: "Recovered draft", creative: { vibe: "nostalgic", hook: "Recovered hook", captions: ["A", "B", "C"], captionStyle: "retro", shotOrder: [1, 2, 0], audioMode: "muted" }, shots: [1, 2, 3].map((shot) => ({ previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4`, duration: 4, name: `shot-${shot}.mp4` })), activeShot: 2, screen: "review", advancedGuidance: true, renders: [], achievements: ["three-shot-finisher"], publicDisplay: false, promoReuse: false };
     const draftSave = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
     await expectStatus(draftSave, 200, "session draft save");
 
     const firstJob = await createJob(sessionId, "retro-cam", "API lifecycle test", { publicDisplay: true, promoReuse: false });
     const firstOutput = await waitForJob(firstJob.id);
+    const otherSourceSession = await newSession();
+    await expectStatus(await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: otherSourceSession, sourceJobId: firstJob.id, presetId: "main-character" }) }), 404, "remix source session ownership");
     const videoResponse = await fetch(`${baseUrl}${firstOutput.outputUrl}`);
     await expectStatus(videoResponse, 200, "output retrieval");
     if ((await videoResponse.arrayBuffer()).byteLength < 1_024) throw new Error("Retrieved export was unexpectedly small.");

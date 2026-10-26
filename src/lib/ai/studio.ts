@@ -9,7 +9,7 @@ export type StudioAssist = {
   hook: string;
   hookOptions: [string, string, string];
   captions: string[];
-  cover: { title: string; frame: "first-second" };
+  cover: { title: string; frame: "three-candidates" };
   postCaption: string;
 };
 
@@ -60,7 +60,7 @@ export function createStudioAssist(preset: ReelPreset, input: DirectorInput = {}
     hook: hookOptions[0],
     hookOptions,
     captions: [...preset.captions],
-    cover: { title: preset.title, frame: "first-second" },
+    cover: { title: preset.title, frame: "three-candidates" },
     postCaption: `${preset.name} made in three shots. #ZenithReel`,
   };
 }

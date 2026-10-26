@@ -45,10 +45,9 @@ async function run(job: ReelJob) {
     job.stage = "validating"; job.metrics.queueWaitMs = Date.now() - job.createdAt; await save(job);
     await Promise.all([1, 2, 3].map((shot) => access(path.join(workspace(job), `shot-${shot}.mp4`))));
     job.stage = "preparing"; await save(job);
-    job.stage = "rendering"; await save(job);
     const reelName = `reel-${job.id}.mp4`;
     const started = Date.now();
-    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, outputName: reelName, sourceDirectory: workspace(job) });
+    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
     const [metadata, output] = await Promise.all([probeVideo(rendered.output), stat(rendered.output)]);
     if (metadata.codecName !== "h264" || metadata.width !== 720 || metadata.height !== 1280 || output.size < 1024) throw new Error("Invalid export");
     job.metrics.renderDurationMs = Date.now() - started;
@@ -56,7 +55,7 @@ async function run(job: ReelJob) {
     job.stage = "finalizing"; await save(job);
     job.outputUrl = `/api/reels/${job.sessionId}/${reelName}`;
     job.coverUrls = rendered.covers.map((cover) => `/api/reels/${job.sessionId}/${path.basename(cover)}`);
-    job.coverUrl = job.coverUrls[0]; job.metrics.completedAt = Date.now(); job.stage = "completed"; await save(job); countSafely("reels_completed");
+    job.coverUrl = `/api/reels/${job.sessionId}/${path.basename(rendered.cover)}`; job.metrics.completedAt = Date.now(); job.stage = "completed"; await save(job); countSafely("reels_completed");
   } catch (error) {
     // Paths and raw FFmpeg diagnostics never enter visitor responses or public logs.
     console.error("Render failed", { jobId: job.id, stage: job.stage, reason: error instanceof Error ? error.message.split(":")[0] : "unknown", code: (error as NodeJS.ErrnoException).code, operation: (error as NodeJS.ErrnoException).syscall });
@@ -92,6 +91,10 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
       sourceDirectory = path.join(directory, `sources-${sourceId}`);
     }
     const fingerprint = JSON.stringify([input.presetId, input.title, input.creative, input.challengeId, sourceId]);
+    const trimSource = input.sourceJobId ? sourceDirectory : directory;
+    for (const [index, start] of input.creative.trimStarts.entries()) {
+      if (start > 0 && start > Math.max(0, (await probeVideo(path.join(trimSource, `shot-${index + 1}.mp4`))).duration - 0.5)) throw new HttpError(400, `Shot ${index + 1} starts too late. Leave at least half a second of footage.`);
+    }
     const duplicate = [...queue.jobs.values()].find((job) => job.sessionId === input.sessionId && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
     if (duplicate) return duplicate;
     if ([...queue.jobs.values()].some((job) => job.sessionId === input.sessionId && isActive(job))) throw new HttpError(429, "Your session already has an export processing. Wait for it to finish before starting another edit.");

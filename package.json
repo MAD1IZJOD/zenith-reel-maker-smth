@@ -11,6 +11,7 @@
     "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/creative/challenges.test.ts src/lib/camera/capabilities.test.ts src/lib/ai/studio.test.ts src/lib/video/shot-analysis.test.ts src/lib/creative/timeline.test.ts tests/server/upload-validation.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
     "generate:audio": "tsx scripts/generate-audio.ts",
     "verify:remix": "tsx --test tests/server/remix.test.ts",
+    "verify:finishing": "tsx scripts/verify-finishing-render.ts",
     "verify:beats": "tsx scripts/verify-beat-render.ts",
     "generate:samples": "node scripts/generate-samples.mjs",
     "smoke:render": "tsx scripts/render-smoke.ts",

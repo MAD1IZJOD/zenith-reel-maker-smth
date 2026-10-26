@@ -5,6 +5,9 @@ import { getPreset } from "@/lib/presets";
 import { assertCompleteSession, assertSessionId, cleanupExpiredSessions } from "@/lib/storage/session-storage";
 import { errorResponse, requireSession, HttpError } from "@/lib/server/security";
 import { getChallenge } from "@/lib/creative/challenges";
+import { getSoundtrack } from "@/lib/creative/music";
+import { access } from "node:fs/promises";
+import path from "node:path";
 
 export const runtime = "nodejs";
 
@@ -16,8 +19,13 @@ export async function POST(request: Request) {
     const preset = getPreset(body.presetId || "");
     if (!preset) throw new Error("Choose a valid preset.");
     try { validateCreativeInput(body.creative); } catch (error) { throw new HttpError(400, (error as Error).message); }
+    const creative = parseCreativeOptions(body.creative, preset);
+    if (creative.audioMode === "soundtrack") {
+      try { await access(path.join(process.cwd(), "public", getSoundtrack(creative.musicId)!.url)); }
+      catch { throw new HttpError(503, "This soundtrack is unavailable. Choose another track, original clip audio, or silent output."); }
+    }
     if (!body.sourceJobId) await assertCompleteSession(sessionId);
-    const job = await createJob({ sessionId, presetId: body.presetId!, sourceJobId: typeof body.sourceJobId === "string" ? body.sourceJobId : undefined, challengeId: getChallenge(body.challengeId)?.id, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, creative: parseCreativeOptions(body.creative, preset), consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
+    const job = await createJob({ sessionId, presetId: body.presetId!, sourceJobId: typeof body.sourceJobId === "string" ? body.sourceJobId : undefined, challengeId: getChallenge(body.challengeId)?.id, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, creative, consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
     void cleanupExpiredSessions();
     return NextResponse.json({ job });
   } catch (error) {
