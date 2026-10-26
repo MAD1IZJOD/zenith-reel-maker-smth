@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { crossOriginReason } from "@/lib/server/origin";
 
 export function middleware(request: NextRequest) {
-  if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
-    const origin = request.headers.get("origin");
-    const expected = process.env.PUBLIC_BASE_URL ? new URL(process.env.PUBLIC_BASE_URL).origin : request.nextUrl.origin;
-    if (request.headers.get("sec-fetch-site") === "cross-site" || origin && origin !== expected) return NextResponse.json({ error: "Cross-origin requests are not allowed." }, { status: 403 });
-  }
+  const blocked = crossOriginReason(request.method, request.headers, request.nextUrl.origin);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 403 });
   const response = NextResponse.next();
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
@@ -15,4 +13,6 @@ export function middleware(request: NextRequest) {
   response.headers.set("Permissions-Policy", "camera=(self), microphone=()");
   return response;
 }
-export const config = { matcher: ["/api/:path*", "/r/:path*", "/operator/:path*", "/festival/:path*", "/display/:path*", "/"] };
+// Media upload routes are excluded: Next.js clones request bodies for middleware and truncates them past
+// middlewareClientMaxBodySize (10 MB). Those routes stream to disk and apply the same origin check themselves.
+export const config = { matcher: ["/api/((?!uploads|sources/upload).*)", "/r/:path*", "/operator/:path*", "/festival/:path*", "/display/:path*", "/podcast/:path*", "/"] };

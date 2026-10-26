@@ -9,6 +9,7 @@ import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from 
 import { exclusive, writeJson } from "@/lib/server/store";
 import { analyzeShot } from "@/lib/video/shot-analysis";
 import { limit } from "@/lib/server/config";
+import { crossOriginReason } from "@/lib/server/origin";
 import { countSafely } from "@/lib/festival/metrics";
 
 export const runtime = "nodejs";
@@ -18,6 +19,9 @@ export async function POST(request: Request) {
   let admitted = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    // This route bypasses middleware (see src/middleware.ts), so it enforces the same-origin rule itself.
+    const blocked = crossOriginReason(request.method, request.headers, new URL(request.url).origin);
+    if (blocked) throw new HttpError(403, blocked);
     rateLimit(`upload:${networkKey(request)}`, 90);
     if ((global.uploadsInFlight || 0) >= limit("MAX_CONCURRENT_UPLOADS", 2, 8)) throw new HttpError(429, "The studio is receiving other clips. Keep this page open and retry shortly.");
     global.uploadsInFlight = (global.uploadsInFlight || 0) + 1; admitted = true;
@@ -61,6 +65,8 @@ export async function POST(request: Request) {
 }
 export async function DELETE(request: Request) {
   try {
+    const blocked = crossOriginReason(request.method, request.headers, new URL(request.url).origin);
+    if (blocked) throw new HttpError(403, blocked);
     const url = new URL(request.url); const sessionId = assertSessionId(url.searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const shot = Number(url.searchParams.get("shot"));
