@@ -22,8 +22,10 @@ export async function POST(request: Request) {
     // This route bypasses middleware (see src/middleware.ts), so it enforces the same-origin rule itself.
     const blocked = crossOriginReason(request.method, request.headers, new URL(request.url).origin);
     if (blocked) throw new HttpError(403, blocked);
-    rateLimit(`upload:${networkKey(request)}`, 90);
+    // Capacity first: a "busy, retry shortly" answer must not use up the per-network allowance, which every visitor
+    // shares on a LAN or tunnel; otherwise retries during a rush would lock everyone out for a minute.
     if ((global.uploadsInFlight || 0) >= limit("MAX_CONCURRENT_UPLOADS", 2, 8)) throw new HttpError(429, "The studio is receiving other clips. Keep this page open and retry shortly.");
+    rateLimit(`upload:${networkKey(request)}`, 90);
     global.uploadsInFlight = (global.uploadsInFlight || 0) + 1; admitted = true;
     const maxBytes = limit("MAX_UPLOAD_MB", 80, 200) * 1024 * 1024;
     if (Number(request.headers.get("content-length")) > maxBytes + 65536) throw new HttpError(413, "This video is too large. Choose a shorter clip.");
