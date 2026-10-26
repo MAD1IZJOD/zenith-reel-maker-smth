@@ -8,7 +8,7 @@ const preset = getPreset("plot-twist")!;
 test("creative options use safe preset defaults", () => {
   const options = defaultCreativeOptions(preset);
   assert.deepEqual(options.shotOrder, [0, 1, 2]);
-  assert.equal(options.audioMode, "muted");
+  assert.equal(options.audioMode, "soundtrack");
   assert.equal(options.captions.length, 3);
 });
 

@@ -25,7 +25,7 @@ test("every preset plans a valid, distinct edit from the same footage", () => {
 
 test("plans are deterministic for regeneration", () => {
   assert.deepEqual(plan(), plan());
-  const args = (edl: ReturnType<typeof plan>) => compileEdl(edl, { sourcePaths: ["a.mp4", "b.mp4", "c.mp4"], fontsDir: "fonts", videoAss: "v.ass", coverAss: "c.ass", output: "o.mp4", coverPattern: "cover-%d.jpg" });
+  const args = (edl: ReturnType<typeof plan>) => compileEdl(edl, { sourcePaths: ["a.mp4", "b.mp4", "c.mp4"], fontsDir: "fonts", videoAss: "v.ass", coverAss: "c.ass", output: "o.mp4", coverPattern: "cover-%d.jpg", musicPath: "m.m4a" });
   assert.deepEqual(args(plan()), args(plan()));
 });
 

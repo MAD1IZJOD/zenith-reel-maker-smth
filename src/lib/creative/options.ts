@@ -57,7 +57,8 @@ export function defaultCreativeOptions(preset: ReelPreset): CreativeOptions {
     captionStyle: recipe.captionStyle,
     captionMode: "cards",
     shotOrder: [0, 1, 2],
-    audioMode: "muted",
+    // Silent reels feel broken on a phone; the original studio soundtrack is licence-safe and carries no bystander audio.
+    audioMode: "soundtrack",
     musicId: "pulse",
     syncMode: "preset",
     customSeconds: [2, 2, 2],
