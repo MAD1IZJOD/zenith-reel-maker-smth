@@ -7,6 +7,9 @@ import type { CaptionStyleId, TitleStyle } from "@/lib/edit/styles";
  * Social app chrome covers roughly the top 10%, bottom 20% and right 14%; nothing is placed there.
  */
 export const SAFE = { top: 0.1, bottom: 0.22, side: 0.08 } as const;
+/** Title-card captions relative to running speech captions (libass sizes by full line height, so cards read small otherwise). */
+const CARD_SCALE = 1.3;
+const num = (value: number) => String(Math.round(value * 100) / 100);
 
 type Font = { family: string; bold: 0 | 1; width: number; upper?: boolean };
 const FONTS = {
@@ -125,11 +128,15 @@ export function buildAss(edl: EditDecisionList, mode: "video" | "cover"): string
     }
     if (overlay.role === "badge") { event(2, overlay.start, overlay.end, "Badge", `{\\c&H003C3CF0&}●{\\c&H00E8F4FF&} ${assText(overlay.text)}`); continue; }
     if (overlay.role === "card") {
+      // Cards hold one to three words, so they are set larger than running speech captions and given a heavier,
+      // softened outline that stays readable over bright footage; fitScale still keeps every line inside the safe width.
+      const cardSize = captionSize * CARD_SCALE;
       const words = assText(overlay.text).split(" ");
-      const wrapped = wrapWords(look.font.upper ? words.map((word) => word.toUpperCase()) : words, look.lineChars).map((line) => line.join(" "));
-      const scale = fitScale(wrapped, look.font, captionSize, width, look.box);
+      const wrapped = wrapWords(look.font.upper ? words.map((word) => word.toUpperCase()) : words, Math.max(8, Math.round(look.lineChars / CARD_SCALE))).map((line) => line.join(" "));
+      const scale = fitScale(wrapped, look.font, cardSize, width, look.box);
       const pop = look.pop ? `\\fscx${Math.round(scale * 0.86)}\\fscy${Math.round(scale * 0.86)}\\t(0,140,\\fscx${scale}\\fscy${scale})` : `\\fscx${scale}\\fscy${scale}`;
-      event(1, overlay.start, overlay.end, "Caption", `{\\fad(${fadeIn},${fadeOut})${pop}}${wrapped.join("\\N")}`);
+      const edge = look.box ? "" : `\\bord${num(Math.max(look.outline, 3) * k * CARD_SCALE * 1.2)}\\blur${num(1.5 * k)}`;
+      event(1, overlay.start, overlay.end, "Caption", `{\\fs${Math.round(cardSize)}${edge}\\fad(${fadeIn},${fadeOut})${pop}}${wrapped.join("\\N")}`);
       continue;
     }
     // Hook and closing titles rise gently into place.
