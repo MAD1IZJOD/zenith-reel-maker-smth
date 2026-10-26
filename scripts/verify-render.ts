@@ -1,3 +1,4 @@
+import "./isolated-data";
 import { copyFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";

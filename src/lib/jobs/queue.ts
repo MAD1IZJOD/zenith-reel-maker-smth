@@ -12,17 +12,21 @@ import { countSafely } from "@/lib/festival/metrics";
 
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
 export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
-export type JobMetrics = { queueWaitMs?: number; renderDurationMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number };
+export type JobMetrics = { queueWaitMs?: number; planMs?: number; renderDurationMs?: number; encodeMs?: number; verifyMs?: number; totalMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number; width?: number; height?: number };
 export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; creative: CreativeOptions; consent: ReelConsent; challengeId?: string; sourceId?: string; sourceJobId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
 type Queue = { jobs: Map<string, ReelJob>; pending: string[]; running: number; ready?: Promise<void>; paused: boolean; draining: boolean };
 const global = globalThis as typeof globalThis & { reelQueue?: Queue };
 const queue: Queue = global.reelQueue ||= { jobs: new Map(), pending: [], running: 0, paused: false, draining: false };
 export const isActive = (job: ReelJob) => !["failed", "completed"].includes(job.stage);
 const workspace = (job: ReelJob) => path.join(dataRoot(), "sessions", job.sessionId, `work-${job.id}`);
+/** Upload-time measurements travel with each immutable snapshot so renders never re-analyse footage. */
+async function copyAnalyses(from: string, to: string) {
+  await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(from, `shot-${shot}-analysis.json`), path.join(to, `shot-${shot}-analysis.json`)).catch(() => undefined)));
+}
 async function save(job: ReelJob) { queue.jobs.set(job.id, job); await writeJobRecord(job); }
 async function removePartial(job: ReelJob) {
   const directory = path.join(dataRoot(), "sessions", job.sessionId);
-  await Promise.all([path.join(directory, `reel-${job.id}.mp4`), ...[1, 2, 3].map((i) => path.join(directory, `cover-reel-${job.id}-${i}.jpg`)), workspace(job)].map((file) => rm(file, { force: true, recursive: true })));
+  await Promise.all([path.join(directory, `reel-${job.id}.mp4`), ...[1, 2, 3].map((i) => path.join(directory, `cover-reel-${job.id}-${i}.jpg`)), path.join(directory, `edl-reel-${job.id}.json`), workspace(job)].map((file) => rm(file, { force: true, recursive: true })));
 }
 export async function initializeQueue() {
   queue.ready ||= (async () => {
@@ -48,9 +52,12 @@ async function run(job: ReelJob) {
     const reelName = `reel-${job.id}.mp4`;
     const started = Date.now();
     const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
+    const verifyStarted = Date.now();
     const [metadata, output] = await Promise.all([probeVideo(rendered.output), stat(rendered.output)]);
-    if (metadata.codecName !== "h264" || metadata.width !== 720 || metadata.height !== 1280 || output.size < 1024) throw new Error("Invalid export");
-    job.metrics.renderDurationMs = Date.now() - started;
+    if (metadata.codecName !== "h264" || metadata.width !== rendered.edl.canvas.width || metadata.height !== rendered.edl.canvas.height || output.size < 1024) throw new Error("Invalid export");
+    job.metrics.verifyMs = Date.now() - verifyStarted; job.metrics.planMs = rendered.timings.planMs; job.metrics.encodeMs = rendered.timings.renderMs;
+    job.metrics.width = metadata.width; job.metrics.height = metadata.height;
+    job.metrics.renderDurationMs = Date.now() - started; job.metrics.totalMs = Date.now() - job.createdAt;
     job.metrics.outputDurationSeconds = metadata.duration; job.metrics.outputBytes = output.size;
     job.stage = "finalizing"; await save(job);
     job.outputUrl = `/api/reels/${job.sessionId}/${reelName}`;
@@ -106,9 +113,10 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
       await mkdir(sourceDirectory, { recursive: true });
       // Exclusive session admission makes this immutable snapshot atomic to renders and uploads.
       await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(directory, `shot-${shot}.mp4`), path.join(sourceDirectory, `shot-${shot}.mp4`))));
+      await copyAnalyses(directory, sourceDirectory);
     }
     await mkdir(workspace(job), { recursive: true });
-    try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(sourceDirectory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await save(job); }
+    try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(sourceDirectory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await copyAnalyses(sourceDirectory, workspace(job)); await save(job); }
     catch (error) { await rm(workspace(job), { recursive: true, force: true }); throw error; }
     queue.pending.push(job.id); pump(); return job;
   }));

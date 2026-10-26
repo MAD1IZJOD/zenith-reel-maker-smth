@@ -4,7 +4,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { assertSessionId, ensureSession } from "@/lib/storage/session-storage";
 import { probeVideo } from "@/lib/video/metadata";
-import { ffmpeg, runProcess } from "@/lib/video/process";
+import { createMezzanine } from "@/lib/video/mezzanine";
 import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from "@/lib/server/security";
 import { exclusive, writeJson } from "@/lib/server/store";
 import { analyzeShot } from "@/lib/video/shot-analysis";
@@ -45,10 +45,11 @@ export async function POST(request: Request) {
         const mediaLimitError = () => new HttpError(400, `Choose a decodable video from 0.5 to ${limit("MAX_CLIP_DURATION", 90, 180)} seconds, no larger than 8K. Your other shots are saved.`);
         const metadata = await probeVideo(temporary, true).catch(() => { throw mediaLimitError(); });
         if (!metadata.formatName.split(",").some((format) => ["mov", "mp4", "webm", "matroska", "3gp", "3g2"].includes(format))) throw new HttpError(400, "This file is not a supported video container.");
-        // Decode and normalize before publishing a preview: correct autorotation, aspect ratio and mobile playback.
-        await runProcess(ffmpeg(), ["-y", "-v", "error", "-xerror", "-threads", "2", "-i", temporary, "-t", String(limit("MAX_CLIP_DURATION", 90, 180) + 1), "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=720:1280:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1", "-filter_threads", "1", "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2", "-ar", "48000", "-movflags", "+faststart", normalized], "Upload normalization", 180_000);
+        // Decode and normalize once into an editing mezzanine (see createMezzanine).
+        await createMezzanine(temporary, normalized, limit("MAX_CLIP_DURATION", 90, 180) + 1);
         const outputMetadata = await probeVideo(normalized).catch(() => { throw mediaLimitError(); });
-        const analysis = await analyzeShot(temporary, { ...metadata, duration: outputMetadata.duration });
+        // Measured on the normalized mezzanine: upright, constant frame rate and cheaper to decode than camera originals.
+        const analysis = await analyzeShot(normalized, outputMetadata);
         await rename(normalized, path.join(directory, `shot-${shot}.mp4`));
         await writeJson(path.join(directory, `shot-${shot}-analysis.json`), analysis);
         countSafely("clip_saved");

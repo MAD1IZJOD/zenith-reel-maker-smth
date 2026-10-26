@@ -1,3 +1,4 @@
+import "./isolated-data";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
@@ -28,7 +29,7 @@ async function main() {
     title: "100%: O'Neil [safe]; %{literal}",
     hook: "Quotes ' and commas, stay literal",
     captions: ["THIRD FIRST", "SECOND NOW", "FIRST LAST"],
-    captionStyle: "bold",
+    captionStyle: "high-energy",
     shotOrder: [2, 1, 0],
     audioMode: "original",
     outputName: "customized.mp4",

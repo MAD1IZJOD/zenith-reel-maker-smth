@@ -1,3 +1,4 @@
+import "./isolated-data";
 import assert from "node:assert/strict";
 import { copyFile } from "node:fs/promises";
 import path from "node:path";

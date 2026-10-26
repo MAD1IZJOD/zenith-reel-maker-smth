@@ -1,3 +1,4 @@
+import "./isolated-data";
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { PRESETS } from "../src/lib/presets";

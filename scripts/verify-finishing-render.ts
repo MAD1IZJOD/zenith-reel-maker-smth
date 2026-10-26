@@ -1,3 +1,4 @@
+import "./isolated-data";
 import assert from "node:assert/strict";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,16 +12,21 @@ async function main() {
   const sessionId = createSessionId(), directory = await ensureSession(sessionId);
   await Promise.all([1, 2, 3].map((i) => copyFile(path.resolve(`public/samples/shot-${i}.mp4`), path.join(directory, `shot-${i}.mp4`))));
   const base = { sessionId, presetId: "main-character", title: "The original title", captions: ["A clear beginning", "The action", "The payoff"] as [string, string, string] };
+  // Samples the opening (hook) and a mid-edit moment where shot caption cards are on screen.
   async function frameHash(file: string, time: number, name: string) {
-    const image = path.join(directory, `${name}.png`);
-    await runProcess(ffmpeg(), ["-y", "-v", "error", "-ss", String(time), "-i", file, "-frames:v", "1", image], "Finishing evidence frame");
-    return createHash("sha256").update(await readFile(image)).digest("hex");
+    const hash = createHash("sha256");
+    for (const [index, at] of (time === 1 ? [1, 4.5] : [time]).entries()) {
+      const image = path.join(directory, `${name}-${index}.png`);
+      await runProcess(ffmpeg(), ["-y", "-v", "error", "-ss", String(at), "-i", file, "-frames:v", "1", image], "Finishing evidence frame");
+      hash.update(await readFile(image));
+    }
+    return hash.digest("hex");
   }
   const baseline = await renderReel({ ...base, outputName: "baseline.mp4" });
   const baselineFrame = await frameHash(baseline.output, 1, "baseline-opening");
   const variants: [string, Partial<RenderRequest>][] = [
-    ["title", { title: "A completely new opening" }],
-    ["captions", { captionStyle: "bold" }],
+    ["hook", { hook: "A completely new opening" }],
+    ["captions", { captionStyle: "high-energy" }],
     ["order", { shotOrder: [2, 1, 0] }],
     ["typography", { typographyStyle: "poster", closingTitle: "The final word", titleSeconds: 1 }],
     ["hidden-captions", { overlaysEnabled: false }],
