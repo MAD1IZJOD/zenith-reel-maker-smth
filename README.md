@@ -1,8 +1,8 @@
 # Zenith Agentic Reel Maker
 
-A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical H.264/AAC MP4: Fast (720 × 1280) or Quality (1080 × 1920). Regenerate from the same footage without recording again. A second mode, **Create from video / podcast** (`/podcast`), imports a recording, transcribes it locally and proposes sentence-aligned highlight moments.
+A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical H.264/AAC MP4: Fast (720 × 1280) or Quality (1080 × 1920). Regenerate from the same footage without recording again. A second mode, **Podcast to reels** (`/podcast`), turns one long recording into three captioned 9:16 reels: it transcribes locally, finds three distinct moments, and renders each in a faceless or original-video style with word-highlighted captions, ready to download individually or as a ZIP.
 
-**Three shots. Infinite stories.** Stage 1 replaced the renderer with a validated Edit Decision List compiled into one FFmpeg pass: measured auto-trim, per-style pacing, curated transitions, consistent colour grades, libass typography with bundled open fonts, word-highlighted speech captions from real timestamps, and speech-safe audio mixing. Creative planning uses a local Qwen model when one can run and transparent rules otherwise. See `deploy/STAGE1_REPORT.md`.
+**Three shots. Infinite stories.** Stage 1 replaced the renderer with a validated Edit Decision List compiled into one FFmpeg pass: measured auto-trim, per-style pacing, curated transitions, consistent colour grades, libass typography with bundled open fonts, word-highlighted speech captions from real timestamps, and speech-safe audio mixing. Creative planning uses a local Qwen model when one can run and transparent rules otherwise. See `deploy/STAGE1_REPORT.md` and `deploy/STAGE2_REPORT.md`.
 
 Visitor entry: `/festival`. The ordinary creator entry remains at `/`. Staff controls are at `/operator`, the projector screen at `/display`, and privacy information at `/privacy`.
 
@@ -36,6 +36,10 @@ npm run benchmark:render    # measured timings on this machine
 npm run fixtures:fetch      # optional CC-BY real-footage fixtures (Tears of Steel)
 npm run verify:transcription && npm run verify:highlights && npm run verify:speech
 npm run verify:qwen         # live local model check; reports a fallback honestly
+npm run verify:url-ingest   # real public-domain link import through the SSRF guards
+npm run verify:discovery    # highlight selection on a real recording
+npm run verify:faceless     # every faceless style and caption look, objective checks + contact sheets
+npm run verify:podcast      # one recording -> three reels, timings, warm re-style, ZIP
 npm run build
 npx playwright install chromium
 npm run verify:browser
@@ -97,9 +101,19 @@ uv pip install --python .venv-transcribe\Scripts\python.exe "faster-whisper==1.2
 
 The `base` model (about 145 MB, downloaded to the user's Hugging Face cache on first use) is the default; set `TRANSCRIBE_MODEL` to `tiny`, `small` or an `.en` variant. Transcripts are stored per source and reused. Without the environment, speech captions fall back to title cards and the podcast page offers SRT/WebVTT/JSON import.
 
-**Video/podcast sources.** Upload (streamed to disk, up to `MAX_SOURCE_MB`/`MAX_SOURCE_MINUTES`) or import a direct public media link. Links are restricted to http(s) on standard ports; private, loopback, link-local and metadata addresses are refused, redirects are re-validated and DNS rebinding is blocked at connect time. Video-platform page links (YouTube, Spotify, Instagram, …) are deliberately not downloaded. Every source requires confirmation that the visitor owns it or has permission. Stage 1 delivers import, transcription and highlight candidates; generating three finished reels from them is Stage 2.
+**Video/podcast sources.** Upload (streamed to disk, up to `MAX_SOURCE_MB`/`MAX_SOURCE_MINUTES`) or import a direct public media link. Links are restricted to http(s) on standard ports; private, loopback, link-local and metadata addresses are refused, redirects are re-validated and DNS rebinding is blocked at connect time. Video-platform page links (YouTube, Spotify, Instagram, …) are deliberately not downloaded. Every source requires confirmation that the visitor owns it or has permission. If a platform link cannot be imported, upload the file instead.
 
 **Higgsfield (optional, billable).** `src/lib/providers/higgsfield.ts` implements the documented Kling 4.0 video-edit API. It is disabled unless `ENABLE_HIGGSFIELD=true` with API credentials from console.higgsfield.ai, needs an explicit spend authorization per request, and is never part of the fast export path.
+
+## Podcast to reels
+
+1. **Source.** Upload a video or audio file, or paste a direct link. Choose clip length (15-30, 30-45 or 45-60 s) and a focus (educational, motivational, storytelling, business, technology, funny, respectful debate or general). Confirm you may make clips from it.
+2. **Analysis.** Real stages only: preparing, transcribing (with the seconds of audio actually processed) and finding highlights. Transcripts and analysis are cached per recording, so changing the look never repeats them.
+3. **Highlights.** Candidate windows are computed from sentence boundaries and word timestamps (never cutting a word), scored on a transparent editorial rubric (hook, completeness, takeaway, story, emotion, focus, clean ending, speech density, loudness emphasis, topic coherence) with penalties for sponsor reads, intros, disclaimers and list fragments, then chosen for distinctness. When local Qwen can run, it scores a shortlist through short aliases it cannot invent and may suggest hooks; hooks that add numbers or claims not in the speech are rejected. Titles are the speaker's own words. Fewer than three good moments are reported honestly. Scores are editorial heuristics, not predicted views.
+4. **Style.** Minimal Podcast (gradient, waveform drawn from the real audio), Cinematic Quote (abstract colour field from the footage, or a gradient for audio-only sources), Contextual B-Roll (your own clips, or spoken keywords as motion graphics) or Original video. Caption looks: Clean, Creator Pop, Cinematic, Minimal. Optional original soundtracks duck under speech.
+5. **Reels.** Three independent render jobs in the bounded queue: completed reels appear as soon as they finish, a failure affects only its reel, and each reel can be retitled, retrimmed, swapped or retried alone. Downloads are named `zenith-reel-01.mp4`...; Download all streams a ZIP of the reels that are actually ready.
+
+Local model memory is released right after ranking or planning so renders never compete with an idle 8B model.
 
 ## Architecture
 
@@ -110,7 +124,8 @@ The `base` model (about 145 MB, downloaded to the user's Hugging Face cache on f
 - `src/lib/edit`: Edit Decision List schema (`edl.ts`), curated styles and grades (`styles.ts`) and the deterministic planners for clip reels and long-form highlights (`planner.ts`).
 - `src/lib/video/compile.ts`, `ass.ts`, `render.ts`, `mezzanine.ts`: EDL to one FFmpeg graph, libass typography and captions, job rendering, and aspect-preserving upload normalization.
 - `src/lib/ai/provider.ts`, `creative-planner.ts`: local model discovery, structured output and rules fallback.
-- `src/lib/sources`, `transcription`, `highlights`, `providers`: safe ingestion, faster-whisper worker interface (`workers/transcribe.py`), highlight candidates and the optional Higgsfield adapter.
+- `src/lib/sources`, `transcription`, `highlights`, `providers`: safe ingestion, faster-whisper worker interface (`workers/transcribe.py`), highlight discovery (`discover.ts`) and the optional Higgsfield adapter.
+- `src/lib/podcast`: three-reel batches (per-reel jobs, edits, retries) and the streaming ZIP; `src/components/podcast`: the Podcast to reels flow and gallery.
 - `src/lib/video/shot-analysis.ts`: source metadata plus up to three small luminance samples; no aesthetic scoring, face recognition or semantic/stability analysis.
 - `src/lib/presets`, `creative`, `ai`: declarative edit configuration, safe deterministic guidance and completion rules.
 - `src/app/api/uploads`, `src/lib/video`: bounded validation, decode/normalization, rendering and cover extraction.
