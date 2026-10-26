@@ -24,7 +24,7 @@ function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),
     windowsHide: true,
-    env: { ...process.env, DATA_DIR: testRoot, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1", OPERATOR_SECRET: operatorTestSecret, ENABLE_LEADERBOARD: "true" },
+    env: { ...process.env, DATA_DIR: testRoot, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1", OPERATOR_SECRET: operatorTestSecret, ENABLE_LEADERBOARD: "true", CREATIVE_MODEL_PROVIDER: "off" },
   });
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));

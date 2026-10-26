@@ -98,15 +98,21 @@ test("Beat Lab exports its selected timing and original soundtrack", async ({ pa
   await expect.poll(() => page.locator(".final-video video").evaluate((video: HTMLVideoElement) => video.duration)).toBeCloseTo(3, 0);
 });
 
-test("Finishing Studio submits title, captions, order, trim and cover controls to a real export", async ({ page }) => {
+test("Finishing Studio submits Director plan, look, profile, title, captions, order, trim and cover controls to a real export", async ({ page }) => {
   await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await page.getByRole("button", { name: "Customize reel" }).click({ timeout: 30_000 });
-  await page.getByLabel("Reel title", { exact: true }).fill("Our first scene");
+  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  await page.getByRole("button", { name: "Ask the Director" }).click();
+  await expect(page.getByText("Planned by studio rules.")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("combobox", { name: "Colour look", exact: true }).selectOption("warm-film");
+  await page.getByRole("button", { name: /^Quality/ }).click();
+  await page.getByRole("tab", { name: "Titles", exact: true }).click();
+  await page.getByLabel("Reel name · cover and file name", { exact: true }).fill("Our first scene");
   await page.getByLabel("Closing title", { exact: true }).fill("A Zenith ending");
   await page.getByRole("combobox", { name: "Typography", exact: true }).selectOption("poster");
   await page.getByLabel(/Opening title duration/).fill("1.5");
   await page.getByRole("tab", { name: "Captions", exact: true }).click();
-  await page.getByRole("combobox", { name: "Caption style", exact: true }).selectOption("bold");
+  await page.getByRole("combobox", { name: "Caption style", exact: true }).selectOption("high-energy");
   await page.getByLabel("Shot 1 overlay").fill("The real opening");
   await page.getByRole("tab", { name: "Shots", exact: true }).click();
   await page.getByRole("button", { name: "Move recorded shot 3 earlier" }).click();
@@ -115,7 +121,7 @@ test("Finishing Studio submits title, captions, order, trim and cover controls t
   await page.getByRole("button", { name: "Back to footage" }).click();
   await expect(page.getByRole("button", { name: /Storyboard position 1, shot 3/ })).toBeVisible();
   await page.getByRole("button", { name: "Customize reel" }).click();
-  await expect(page.getByLabel("Reel title", { exact: true })).toHaveValue("Our first scene");
+  await expect(page.getByLabel("Reel name · cover and file name", { exact: true })).toHaveValue("Our first scene");
   await page.getByRole("tab", { name: "Cover", exact: true }).click();
   await page.getByLabel("Cover title", { exact: true }).fill("A frame to remember");
   await page.getByLabel("Default cover moment").selectOption("2");
@@ -130,9 +136,10 @@ test("Finishing Studio submits title, captions, order, trim and cover controls t
   await expect(page.getByRole("button", { name: "Generate MP4" })).toBeInViewport();
   await page.getByRole("button", { name: "Generate MP4" }).click();
   const specification = (await submitted).postDataJSON();
-  expect(specification.creative).toMatchObject({ closingTitle: "A Zenith ending", typographyStyle: "poster", captionStyle: "bold", shotOrder: [2, 0, 1], trimStarts: [0, 0, 0.5], coverFrame: 2, coverTitle: "A frame to remember" });
+  expect(specification.creative).toMatchObject({ closingTitle: "A Zenith ending", typographyStyle: "poster", captionStyle: "high-energy", shotOrder: [2, 0, 1], trimStarts: [0, 0, 0.5], trimMode: "manual", coverFrame: 2, coverTitle: "A frame to remember", grade: "warm-film", profile: "quality", planSource: "rules" });
   await expect(page.getByRole("heading", { name: "Made from your moments." })).toBeVisible({ timeout: 80_000 });
   await expect(page.locator(".final-video video")).toHaveAttribute("poster", /-3\.jpg$/);
+  await expect(page.locator(".export-meta")).toContainText("1080 × 1920");
   const download = page.waitForEvent("download"); await page.getByRole("link", { name: "Download cover", exact: true }).click();
   expect((await download).suggestedFilename()).toMatch(/\.jpg$/);
   await (await download).saveAs("data/browser-results/finished-cover.jpg");

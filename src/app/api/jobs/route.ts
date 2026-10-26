@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     if (!preset) throw new Error("Choose a valid preset.");
     try { validateCreativeInput(body.creative); } catch (error) { throw new HttpError(400, (error as Error).message); }
     const creative = parseCreativeOptions(body.creative, preset);
-    if (creative.audioMode === "soundtrack") {
+    if (creative.audioMode === "soundtrack" || creative.audioMode === "mix") {
       try { await access(path.join(process.cwd(), "public", getSoundtrack(creative.musicId)!.url)); }
       catch { throw new HttpError(503, "This soundtrack is unavailable. Choose another track, original clip audio, or silent output."); }
     }
