@@ -12,6 +12,7 @@ test("cinematic landing and accessible storyboard reflect real footage", async (
     await page.screenshot({ path: `data/browser-results/zenith-landing-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".hero-panel").first()).toHaveCSS("transform", "none");
   await page.getByRole("button", { name: "Create your reel" }).click();
   await page.locator(".preset .card-action").first().click();
   const board = page.getByLabel("Three-shot storyboard");
@@ -29,6 +30,29 @@ test("cinematic landing and accessible storyboard reflect real footage", async (
   await expect(board.locator("video")).toHaveAttribute("src", /shot-2/);
   await page.screenshot({ path: "data/browser-results/zenith-storyboard-390.png", fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test("spatial motion and recording navigation stay usable without WebGL", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Explore sample shot 1" }).click();
+  await expect(page.getByRole("button", { name: "Explore sample shot 1" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".hero-installation")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: "data/browser-results/zenith-motion-1440.png", fullPage: true });
+  await page.getByRole("button", { name: "Create your reel" }).click();
+  await expect(page.locator("article.preset")).toHaveCount(7);
+  await expect(page.locator(".preset-art img")).toHaveCount(7);
+  await page.screenshot({ path: "data/browser-results/zenith-presets-1440.png", fullPage: true });
+  await page.locator(".preset .card-action").first().click();
+  await page.getByRole("button", { name: /Storyboard position 3/ }).click();
+  await expect(page.getByRole("button", { name: /Storyboard position 3/ })).not.toHaveCSS("transform", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.getByRole("button", { name: /Storyboard position 3/ })).toHaveCSS("transform", "none");
+  await page.getByRole("button", { name: "Capture this shot" }).click();
+  await expect(page.locator(".storyboard")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open camera", exact: true })).toBeEnabled();
+  await expect(page.locator("canvas")).toHaveCount(0);
 });
 
 test("Remix Lab renders, compares and downloads two edits from one source", async ({ page }) => {
@@ -101,6 +125,9 @@ test("Finishing Studio submits title, captions, order, trim and cover controls t
     await page.screenshot({ path: `data/browser-results/zenith-finishing-${width}.png`, fullPage: true });
   }
   const submitted = page.waitForRequest((request) => request.url().endsWith("/api/jobs") && request.method() === "POST");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Generate MP4" }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("button", { name: "Generate MP4" })).toBeInViewport();
   await page.getByRole("button", { name: "Generate MP4" }).click();
   const specification = (await submitted).postDataJSON();
   expect(specification.creative).toMatchObject({ closingTitle: "A Zenith ending", typographyStyle: "poster", captionStyle: "bold", shotOrder: [2, 0, 1], trimStarts: [0, 0, 0.5], coverFrame: 2, coverTitle: "A frame to remember" });
