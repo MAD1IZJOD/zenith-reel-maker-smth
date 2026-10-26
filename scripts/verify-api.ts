@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
 import { probeVideo } from "../src/lib/video/metadata";
 import { sessionDirectory } from "../src/lib/storage/session-storage";
@@ -8,13 +8,25 @@ import { sessionDirectory } from "../src/lib/storage/session-storage";
 const port = 3101;
 const baseUrl = `http://127.0.0.1:${port}`;
 const log: string[] = [];
-const server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
-  cwd: process.cwd(),
-  windowsHide: true,
-  env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1" },
-});
-server.stdout.on("data", (chunk) => log.push(chunk.toString()));
-server.stderr.on("data", (chunk) => log.push(chunk.toString()));
+function startServer(): ChildProcess {
+  const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
+    cwd: process.cwd(),
+    windowsHide: true,
+    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1" },
+  });
+  child.stdout.on("data", (chunk) => log.push(chunk.toString()));
+  child.stderr.on("data", (chunk) => log.push(chunk.toString()));
+  return child;
+}
+
+async function stopServer(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill();
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+}
+
+let server = startServer();
 
 async function waitForHealth(): Promise<void> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -48,8 +60,8 @@ async function waitForJob(id: string): Promise<{ outputUrl: string; coverUrl: st
   throw new Error("API render did not complete before the test timeout.");
 }
 
-async function createJob(sessionId: string, presetId: string, title: string): Promise<{ id: string }> {
-  const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title }) });
+async function createJob(sessionId: string, presetId: string, title: string, consent = { publicDisplay: false, promoReuse: false }): Promise<{ id: string }> {
+  const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title, consent }) });
   await expectStatus(response, 200, "job creation");
   return (await response.json() as { job: { id: string } }).job;
 }
@@ -57,6 +69,7 @@ async function createJob(sessionId: string, presetId: string, title: string): Pr
 async function main() {
   try {
     await waitForHealth();
+    await expectStatus(await fetch(`${baseUrl}/api/jobs?id=not-a-job-id`), 404, "invalid job lookup");
     const invalidSession = randomUUID();
     await expectStatus(await upload(invalidSession, 1, "not a video", "text/plain"), 400, "invalid MIME validation");
     await expectStatus(await upload(invalidSession, 1, new Uint8Array(0)), 400, "empty file validation");
@@ -69,8 +82,11 @@ async function main() {
     const incomplete = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: "retro-cam" }) });
     await expectStatus(incomplete, 400, "incomplete session validation");
     for (let shot = 2; shot <= 3; shot += 1) await expectStatus(await upload(sessionId, shot, await readFile(path.join(process.cwd(), "public", "samples", `shot-${shot}.mp4`))), 200, `valid upload ${shot}`);
+    const draft = { presetId: "retro-cam", title: "Recovered draft", shots: [1, 2, 3].map((shot) => ({ previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4`, duration: 4, name: `shot-${shot}.mp4` })), activeShot: 2, screen: "review", publicDisplay: false, promoReuse: false };
+    const draftSave = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+    await expectStatus(draftSave, 200, "session draft save");
 
-    const firstJob = await createJob(sessionId, "retro-cam", "API lifecycle test");
+    const firstJob = await createJob(sessionId, "retro-cam", "API lifecycle test", { publicDisplay: true, promoReuse: false });
     const firstOutput = await waitForJob(firstJob.id);
     const videoResponse = await fetch(`${baseUrl}${firstOutput.outputUrl}`);
     await expectStatus(videoResponse, 200, "output retrieval");
@@ -83,9 +99,20 @@ async function main() {
     const secondJob = await createJob(sessionId, "movie-trailer", "API regenerated test");
     const secondOutput = await waitForJob(secondJob.id);
     if (firstOutput.outputUrl === secondOutput.outputUrl) throw new Error("Regeneration reused the previous output path.");
+    await stopServer(server);
+    server = startServer();
+    await waitForHealth();
+    const recoveredResponse = await fetch(`${baseUrl}/api/jobs?id=${firstJob.id}`);
+    await expectStatus(recoveredResponse, 200, "completed-job recovery after restart");
+    const { job: recovered } = await recoveredResponse.json() as { job: { stage: string; consent: { publicDisplay: boolean; promoReuse: boolean } } };
+    if (recovered.stage !== "completed" || !recovered.consent.publicDisplay || recovered.consent.promoReuse) throw new Error("Persisted job or consent record was not recovered correctly.");
+    const recoveredDraftResponse = await fetch(`${baseUrl}/api/sessions/${sessionId}`);
+    await expectStatus(recoveredDraftResponse, 200, "session draft recovery after restart");
+    const { draft: recoveredDraft } = await recoveredDraftResponse.json() as { draft: { title: string; shots: unknown[] } };
+    if (recoveredDraft.title !== draft.title || recoveredDraft.shots.length !== 3) throw new Error("Persisted studio draft was not recovered correctly.");
     console.log(JSON.stringify({ sessionId, firstOutput, secondOutput, metadata }, null, 2));
   } finally {
-    server.kill();
+    await stopServer(server);
   }
 }
 

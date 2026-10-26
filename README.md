@@ -27,16 +27,16 @@ npm run build
 
 Check the installed video dependencies with `Invoke-RestMethod http://localhost:3000/api/health`. It reports a non-200 result when FFmpeg or FFprobe cannot be started.
 
-`npm test` runs the preset unit test, renders all seven presets from the same three sample clips, verifies nonempty 720×1280 H.264 MP4s plus cover images, and starts an isolated local server to test upload validation, job lifecycle, output retrieval, and regeneration. Test outputs are written to `data/sessions/<random-session>/` and are intentionally not committed.
+`npm test` runs the preset unit test and renders all seven presets from the same three sample clips, verifying nonempty 720×1280 H.264 MP4s plus cover images. Run `npm run verify:api` for the isolated-server check of upload validation, job lifecycle, server-restart recovery, output retrieval, and regeneration. Test outputs are written to `data/sessions/<random-session>/` and are intentionally not committed.
 
 ## Architecture
 
 - `src/app/page.tsx` is the mobile-first flow: Welcome → Preset → Three shots → Review → Render → Preview/download.
 - `src/lib/presets` contains seven declarative style configurations; render behavior is determined by those values rather than copied functions.
 - `src/app/api/uploads` validates the declared media type, size, actual FFprobe metadata, and duration before storing an input.
-- `src/lib/jobs/queue.ts` is a bounded, one-render-at-a-time local job queue. It reports real stages: queued, validating, preparing, rendering, finalizing, completed, and failed.
+- `src/lib/jobs/queue.ts` is a bounded, one-render-at-a-time local job queue. It reports real stages: queued, validating, preparing, rendering, finalizing, completed, and failed. Job and consent records are written to `data/jobs/`, so completed jobs survive a server restart; interrupted renders are made retryable failures rather than remaining stuck.
 - `src/lib/video/render.ts` normalizes all source videos to vertical 720×1280/30fps, applies preset color/effect filters and xfade transitions, adds title text, then produces a fast-start H.264 MP4. Inputs are intentionally muted; no unlicensed music is packaged.
-- `src/lib/storage/session-storage.ts` uses random UUID session tokens and opportunistically deletes expired session folders when uploads or jobs are submitted. Retention defaults to 24 hours and is configurable.
+- `src/lib/storage/session-storage.ts` uses random UUID session tokens and opportunistically deletes expired session folders and job records when uploads or jobs are submitted. Retention defaults to 24 hours and is configurable. The browser retains the current workflow in session storage to recover from an ordinary refresh without exposing it to the next kiosk visitor.
 
 ## Privacy and consent
 
@@ -58,7 +58,7 @@ Deploy to a long-running Node host with a writable temporary disk, FFmpeg/FFprob
 
 ## Known limitations
 
-- Camera behavior needs testing on the actual target phones; it cannot be verified from this development environment.
+- Camera behavior needs testing on the actual target phones; it cannot be verified from this development environment. Manual test: open over HTTPS, choose each facing camera, record/stop all three shots, verify their playback, retake Shot 2, deny permission once, and confirm the gallery upload remains usable.
 - The one-process queue and local filesystem are deliberate demo architecture, not multi-machine production infrastructure.
 - Audio is intentionally muted in output so the app does not ship copyrighted music. User audio is not mixed at this stage.
 - Big-screen and promotional permissions are captured in the local page state only; a production festival needs persisted audit records and staff controls.

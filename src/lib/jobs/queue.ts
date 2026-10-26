@@ -1,13 +1,16 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { createSessionId, ensureSession } from "@/lib/storage/session-storage";
+import { createSessionId, ensureSession, readJobRecord, removeJobRecord, writeJobRecord } from "@/lib/storage/session-storage";
 import { renderReel } from "@/lib/video/render";
 
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
-export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; createdAt: number; expiresAt: number };
+export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
+export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; consent: ReelConsent; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; createdAt: number; expiresAt: number };
 const jobs = new Map<string, ReelJob>();
 const pending: string[] = [];
 let running = false;
+
+async function save(job: ReelJob): Promise<void> { jobs.set(job.id, job); await writeJobRecord(job); }
 
 async function pump(): Promise<void> {
   if (running) return;
@@ -17,34 +20,49 @@ async function pump(): Promise<void> {
   const job = jobs.get(id)!;
   try {
     job.stage = "validating";
+    await save(job);
     const directory = await ensureSession(job.sessionId);
     await Promise.all([1, 2, 3].map((shot) => access(path.join(directory, `shot-${shot}.mp4`))));
     job.stage = "preparing";
+    await save(job);
     job.stage = "rendering";
+    await save(job);
     const reelName = `reel-${job.id}.mp4`;
     await renderReel({ ...job, outputName: reelName });
     job.stage = "finalizing";
+    await save(job);
     job.outputUrl = `/api/reels/${job.sessionId}/${reelName}`;
     job.coverUrl = `/api/reels/${job.sessionId}/cover-reel-${job.id}.jpg`;
     job.stage = "completed";
+    await save(job);
   } catch (error) {
     job.stage = "failed";
     job.error = error instanceof Error ? error.message.slice(0, 500) : "Rendering failed.";
+    await save(job);
   } finally {
     running = false;
     void pump();
   }
 }
 
-export function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt" | "expiresAt">): ReelJob {
+export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt" | "expiresAt">): Promise<ReelJob> {
   const duplicate = [...jobs.values()].find((job) => job.sessionId === input.sessionId && job.presetId === input.presetId && job.title === input.title && job.stage !== "failed");
   if (duplicate) return duplicate;
   const createdAt = Date.now();
   const job: ReelJob = { ...input, id: createSessionId(), stage: "queued", createdAt, expiresAt: createdAt + Math.max(1, Number(process.env.RETENTION_HOURS || 24)) * 3_600_000 };
-  jobs.set(job.id, job); pending.push(job.id); void pump(); return job;
+  await save(job); pending.push(job.id); void pump(); return job;
 }
-export const getJob = (id: string) => {
-  const job = jobs.get(id);
-  if (job && job.expiresAt < Date.now()) { jobs.delete(id); return undefined; }
+export const getJob = async (id: string): Promise<ReelJob | undefined> => {
+  let job = jobs.get(id);
+  if (!job) {
+    try { job = await readJobRecord<ReelJob>(id); }
+    catch { return undefined; }
+  }
+  if (job && job.expiresAt < Date.now()) { jobs.delete(id); await removeJobRecord(id); return undefined; }
+  if (job && ["queued", "validating", "preparing", "rendering", "finalizing"].includes(job.stage) && !jobs.has(job.id)) {
+    job.stage = "failed";
+    job.error = "The server restarted while this reel was processing. Retry with the same three shots.";
+    await save(job);
+  }
   return job;
 };
