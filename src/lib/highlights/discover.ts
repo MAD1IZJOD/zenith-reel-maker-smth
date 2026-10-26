@@ -256,7 +256,7 @@ async function rankWithModel(pool: Highlight[], preferences: Preferences, provid
   const batch = pool.slice(0, 6);
   const aliases = batch.map((_, index) => `c${index + 1}`);
   const result = await provider.structured({
-    name: "highlight_ranking", schema: rankingSchema(aliases), jsonSchema: rankingJsonSchema(aliases), maxTokens: 260, temperature: 0.2, timeoutMs: 90_000,
+    name: "highlight_ranking", schema: rankingSchema(aliases), jsonSchema: rankingJsonSchema(aliases), maxTokens: 260, temperature: 0.2,
     messages: [
       { role: "system", content: "Score each clip 0-100 as a stand-alone short vertical video for a general, school-safe audience: strong opening, self-contained meaning, clear takeaway, curiosity, quotability. Hook: at most 8 words, faithful to what is said, no new facts or numbers. JSON only." },
       { role: "user", content: JSON.stringify({ focus: preferences.tone, clips: batch.map((item, index) => ({ id: aliases[index], text: item.transcript.slice(0, 340) })) }) },

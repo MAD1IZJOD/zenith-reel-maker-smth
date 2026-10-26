@@ -19,7 +19,8 @@ export function providerConfig(env: Record<string, string | undefined> = process
   const timeout = Number(env.CREATIVE_MODEL_TIMEOUT_MS);
   return {
     mode, url: (env.CREATIVE_MODEL_URL || (mode === "openai" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434")).replace(/\/+$/, ""),
-    model: env.CREATIVE_MODEL || "auto", timeoutMs: Number.isFinite(timeout) && timeout >= 1000 && timeout <= 120_000 ? timeout : 25_000, contextTokens: 4096,
+    model: env.CREATIVE_MODEL || "auto", // Measured: Qwen3 8B on CPU answers a compact plan in 32-52 s including a ~9 s cold load.
+    timeoutMs: Number.isFinite(timeout) && timeout >= 1000 && timeout <= 180_000 ? timeout : 75_000, contextTokens: 4096,
   };
 }
 

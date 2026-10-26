@@ -211,7 +211,7 @@ export default function Studio({ festival = false }: { festival?: boolean }) {
     if (planning) return;
     setPlanning(true);
     try {
-      const response = await fetch("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: preset.id, vibe: creative.vibe, challenge: challenge?.title }), signal: AbortSignal.timeout(45_000) });
+      const response = await fetch("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: preset.id, vibe: creative.vibe, challenge: challenge?.title }), signal: AbortSignal.timeout(80_000) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "The Director is unavailable. Your settings are unchanged.");
       setCreative((current) => ({ ...current, ...data.patch }));

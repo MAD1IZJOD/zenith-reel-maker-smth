@@ -26,14 +26,14 @@ export function observe(preset: ReelPreset, analyses: (ShotAnalysis | undefined)
 
 export const planSchema = z.object({
   hook: z.string().min(2).max(60),
-  hookAlternatives: z.array(z.string().min(2).max(60)).min(2).max(3),
+  hookAlternatives: z.array(z.string().min(2).max(60)).min(1).max(2),
   shotOrder: z.array(z.number().int().min(1).max(3)).length(3).refine((order) => new Set(order).size === 3, "Shot order must use each shot once."),
   pacing: z.enum(PACINGS),
   transitionStyle: z.enum(TRANSITION_FAMILIES),
   grade: z.enum(GRADES),
   captionStyle: z.enum(CAPTION_STYLES),
   captions: z.array(z.string().min(1).max(60)).length(3),
-  rationale: z.string().max(300),
+  rationale: z.string().max(160),
 });
 export type ModelPlan = z.infer<typeof planSchema>;
 
@@ -42,11 +42,11 @@ const planJsonSchema = {
   type: "object", additionalProperties: false,
   required: ["hook", "hookAlternatives", "shotOrder", "pacing", "transitionStyle", "grade", "captionStyle", "captions", "rationale"],
   properties: {
-    hook: { type: "string", maxLength: 52 }, hookAlternatives: { type: "array", items: { type: "string", maxLength: 52 }, minItems: 2, maxItems: 3 },
+    hook: { type: "string", maxLength: 52 }, hookAlternatives: { type: "array", items: { type: "string", maxLength: 40 }, minItems: 1, maxItems: 2 },
     shotOrder: { type: "array", items: { type: "integer", minimum: 1, maximum: 3 }, minItems: 3, maxItems: 3 },
     pacing: { type: "string", enum: [...PACINGS] }, transitionStyle: { type: "string", enum: [...TRANSITION_FAMILIES] },
     grade: { type: "string", enum: [...GRADES] }, captionStyle: { type: "string", enum: [...CAPTION_STYLES] },
-    captions: { type: "array", items: { type: "string", maxLength: 40 }, minItems: 3, maxItems: 3 }, rationale: { type: "string", maxLength: 240 },
+    captions: { type: "array", items: { type: "string", maxLength: 24 }, minItems: 3, maxItems: 3 }, rationale: { type: "string", maxLength: 120 },
   },
 };
 
@@ -79,7 +79,7 @@ export function rulesPlan(preset: ReelPreset, vibe: CreativeVibe, observations: 
 
 function prompt(preset: ReelPreset, vibe: CreativeVibe, observations: ShotObservation[], challenge?: string) {
   return [
-    { role: "system" as const, content: "You are the editor of short vertical festival reels for a general audience. Choose only from the allowed values. Hooks are 2-6 words, punchy, family-friendly, no hashtags or emoji. Captions are 1-4 words, one per shot in the ORIGINAL shot numbering. Reply with JSON only." },
+    { role: "system" as const, content: "You are the editor of short vertical festival reels for a general audience. Choose only from the allowed values. Keep every field short (measured local speed is about 6 words per second). Hooks are 2-6 words, punchy, family-friendly, no hashtags or emoji. Captions are 1-4 words, one per shot in the ORIGINAL shot numbering. Reply with JSON only." },
     { role: "user" as const, content: JSON.stringify({ style: preset.name, styleDescription: preset.description, vibe, challenge: challenge || null, shots: observations, rules: "shotOrder lists shot numbers 1-3 in playback order. Prefer an action or a strong face early, and the biggest moment last." }) },
   ];
 }
@@ -88,7 +88,7 @@ export async function planCreative(preset: ReelPreset, vibe: CreativeVibe, analy
   const observations = observe(preset, analyses);
   const fallback = rulesPlan(preset, vibe, observations, challenge);
   try {
-    const { value, latencyMs, model } = await provider.structured({ name: "reel_plan", schema: planSchema, jsonSchema: planJsonSchema, messages: prompt(preset, vibe, observations, challenge), maxTokens: 350 });
+    const { value, latencyMs, model } = await provider.structured({ name: "reel_plan", schema: planSchema, jsonSchema: planJsonSchema, messages: prompt(preset, vibe, observations, challenge), maxTokens: 220 });
     const hook = cleanCreativeText(value.hook, fallback.patch.hook);
     const captions = value.captions.map((caption, index) => cleanCreativeText(caption, preset.captions[index], 44)) as [string, string, string];
     return {
