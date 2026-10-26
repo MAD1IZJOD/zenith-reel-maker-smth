@@ -1,12 +1,14 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { countSafely } from "@/lib/festival/metrics";
 
 /** Streaming, single-range responses avoid buffering large MP4s and support Safari seeking. */
 export async function serveMedia(request: Request, file: string, contentType: string, filename = "squad-reel.mp4") {
   const { size } = await stat(file);
   const headers = new Headers({ "Content-Type": contentType, "Accept-Ranges": "bytes", "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" });
   if (new URL(request.url).searchParams.has("download")) headers.set("Content-Disposition", `attachment; filename="${filename.replace(/[^a-z0-9.-]/gi, "-")}"`);
+  if (new URL(request.url).searchParams.has("download")) countSafely("download_requests");
   const range = request.headers.get("range");
   let start = 0, end = size - 1;
   if (range) {

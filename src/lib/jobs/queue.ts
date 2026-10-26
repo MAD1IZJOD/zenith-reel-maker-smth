@@ -7,6 +7,7 @@ import { renderReel } from "@/lib/video/render";
 import { dataRoot, limit, retentionMs } from "@/lib/server/config";
 import { exclusive } from "@/lib/server/store";
 import { HttpError } from "@/lib/server/security";
+import { countSafely } from "@/lib/festival/metrics";
 
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
 export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
@@ -29,11 +30,11 @@ export async function initializeQueue() {
     for (const entry of await readdir(directory)) {
       if (!/^[a-f0-9-]{36}\.json$/i.test(entry)) continue;
       const job = await readJobRecord<ReelJob>(entry.slice(0, -5));
-      if (!job || job.expiresAt <= Date.now()) continue;
+      if (!job) continue;
       if (isActive(job)) {
         job.stage = "failed"; job.error = "The server restarted during export. Your clips are preserved; retry this reel.";
         await removePartial(job); await save(job);
-      } else queue.jobs.set(job.id, job);
+      } else if (job.expiresAt > Date.now()) queue.jobs.set(job.id, job);
     }
   })();
   await queue.ready;
@@ -54,12 +55,12 @@ async function run(job: ReelJob) {
     job.stage = "finalizing"; await save(job);
     job.outputUrl = `/api/reels/${job.sessionId}/${reelName}`;
     job.coverUrls = rendered.covers.map((cover) => `/api/reels/${job.sessionId}/${path.basename(cover)}`);
-    job.coverUrl = job.coverUrls[0]; job.metrics.completedAt = Date.now(); job.stage = "completed"; await save(job);
+    job.coverUrl = job.coverUrls[0]; job.metrics.completedAt = Date.now(); job.stage = "completed"; await save(job); countSafely("reels_completed");
   } catch (error) {
     // Paths and raw FFmpeg diagnostics never enter visitor responses or public logs.
     console.error("Render failed", { jobId: job.id, reason: error instanceof Error ? error.message.split(":")[0] : "unknown" });
     job.stage = "failed"; job.error = "Export failed or timed out. Your original clips are saved. Please retry.";
-    await removePartial(job); await save(job);
+    await removePartial(job); await save(job); countSafely("render_failures");
   } finally { await rm(workspace(job), { recursive: true, force: true }); }
 }
 function pump() {

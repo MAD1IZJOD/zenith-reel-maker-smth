@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
@@ -10,6 +10,7 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const nextEnvPath = path.join(process.cwd(), "next-env.d.ts");
 const log: string[] = [];
 const cookies = new Map<string, string>();
+const operatorTestSecret = randomUUID() + randomUUID();
 const rawFetch = globalThis.fetch;
 async function fetch(input: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers); headers.set("Cookie", [...cookies].map(([key, value]) => `${key}=${value}`).join("; "));
@@ -22,7 +23,7 @@ function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),
     windowsHide: true,
-    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1" },
+    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1", OPERATOR_SECRET: operatorTestSecret, ENABLE_LEADERBOARD: "true" },
   });
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));
@@ -77,7 +78,7 @@ async function waitForJob(id: string): Promise<{ outputUrl: string; coverUrl: st
 
 async function createJob(sessionId: string, presetId: string, title: string, consent = { publicDisplay: false, promoReuse: false }): Promise<{ id: string }> {
   const creative = { vibe: "dramatic", hook: "API hook that renders", captions: ["FIRST", "SECOND", "THIRD"], captionStyle: "bold", shotOrder: [2, 0, 1], audioMode: "original" };
-  const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title, creative, consent }) });
+    const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title, creative, consent, challengeId: "memories" }) });
   await expectStatus(response, 200, "job creation");
   return (await response.json() as { job: { id: string } }).job;
 }
@@ -133,6 +134,41 @@ async function main() {
     const retrievedMedia = await rawFetch(`${baseUrl}${linkData.mediaUrl}`); await expectStatus(retrievedMedia, 200, "retrieval MP4"); await retrievedMedia.arrayBuffer();
     await expectStatus(await fetch(`${baseUrl}/api/retrieval`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }), 200, "revoke retrieval");
     await expectStatus(await rawFetch(`${baseUrl}/api/retrieval/${token}`), 410, "revoked retrieval denied");
+    const expiresResponse = await fetch(`${baseUrl}/api/retrieval`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: firstJob.id }) });
+    const expiresToken = (await expiresResponse.json()).token;
+    const tokenFile = path.join(process.cwd(), "data", "retrieval", `${createHash("sha256").update(expiresToken).digest("hex")}.json`);
+    const tokenRecord = JSON.parse(await readFile(tokenFile, "utf8")); tokenRecord.expiresAt = Date.now() - 1; await writeFile(tokenFile, JSON.stringify(tokenRecord));
+    await expectStatus(await rawFetch(`${baseUrl}/api/retrieval/${expiresToken}`), 410, "expired retrieval denied");
+    const post = (url: string, body: unknown) => fetch(`${baseUrl}${url}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await expectStatus(await rawFetch(`${baseUrl}/api/operator`), 401, "unauthorized operator status");
+    await expectStatus(await rawFetch(`${baseUrl}/api/operator`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "display", paused: false, demoOnly: false }) }), 401, "unauthorized operator action");
+    await expectStatus(await post("/api/premiere", { jobId: firstJob.id, allPeopleAgree: false }), 400, "premiere requires explicit permission");
+    const submission = await post("/api/premiere", { jobId: firstJob.id, consentBasis: "guardian", allPeopleAgree: true, promoReuse: false }); await expectStatus(submission, 200, "premiere submission");
+    const entry = (await submission.json()).entry;
+    await expectStatus(await rawFetch(`${baseUrl}/api/display/${entry.id}`), 404, "unapproved reel never public");
+    await expectStatus(await post("/api/operator/login", { secret: operatorTestSecret }), 200, "operator login");
+    const staffMedia = await fetch(`${baseUrl}/api/operator/media?id=${entry.id}`); await expectStatus(staffMedia, 200, "consented staff review"); await staffMedia.arrayBuffer();
+    await expectStatus(await post("/api/operator", { action: "review", id: entry.id, status: "approved" }), 200, "operator approval");
+    const playlist = await (await rawFetch(`${baseUrl}/api/display`)).json();
+    if (!playlist.playlist.some((item: { id: string }) => item.id === entry.id) || JSON.stringify(playlist).includes(sessionId)) throw new Error("Public display isolation failed");
+    const publicMedia = await rawFetch(`${baseUrl}/api/display/${entry.id}`); await expectStatus(publicMedia, 200, "approved reel public"); await publicMedia.arrayBuffer();
+    await post("/api/operator", { action: "display", paused: true, demoOnly: false });
+    await expectStatus(await rawFetch(`${baseUrl}/api/display/${entry.id}`), 404, "operator playback pause");
+    await post("/api/operator", { action: "display", paused: false, demoOnly: false });
+    await post("/api/operator", { action: "review", id: entry.id, status: "rejected" });
+    await expectStatus(await rawFetch(`${baseUrl}/api/display/${entry.id}`), 404, "removed reel never public");
+    await post("/api/premiere", { jobId: firstJob.id, consentBasis: "guardian", allPeopleAgree: true });
+    await post("/api/operator", { action: "review", id: entry.id, status: "approved" });
+    await expectStatus(await fetch(`${baseUrl}/api/premiere`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) }), 200, "visitor revokes screening");
+    await expectStatus(await rawFetch(`${baseUrl}/api/display/${entry.id}`), 404, "revoked screening blocked");
+    await expectStatus(await post("/api/operator", { action: "review", id: entry.id, status: "approved" }), 409, "staff cannot override revoked permission");
+    await expectStatus(await post("/api/battle", { jobId: firstJob.id, nickname: "Calm Comets", optIn: false }), 400, "leaderboard opt-in required");
+    await expectStatus(await post("/api/battle", { jobId: firstJob.id, nickname: "unsafe nickname", optIn: true }), 400, "curated nickname moderation");
+    const score = await post("/api/battle", { jobId: firstJob.id, nickname: "Calm Comets", optIn: true, score: 999999 }); await expectStatus(score, 200, "verified leaderboard entry");
+    if ((await score.json()).entry.score !== 100) throw new Error("Client changed score");
+    await post("/api/battle", { jobId: firstJob.id, nickname: "Calm Comets", optIn: true });
+    const standings = await (await rawFetch(`${baseUrl}/api/battle`)).json(); if (JSON.stringify(standings).includes(sessionId)) throw new Error("Leaderboard leaked session");
+    const csrf = await rawFetch(`${baseUrl}/api/operator`, { method: "POST", headers: { Origin: "https://untrusted.example", "Content-Type": "application/json" }, body: "{}" }); await expectStatus(csrf, 403, "cross-origin mutation denied");
 
     const secondJob = await createJob(sessionId, "movie-trailer", "API regenerated test");
     const secondOutput = await waitForJob(secondJob.id);
