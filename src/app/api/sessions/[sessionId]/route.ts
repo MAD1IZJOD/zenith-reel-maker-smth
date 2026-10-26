@@ -9,12 +9,12 @@ import type { ShotAnalysis } from "@/lib/video/shot-analysis-types";
 import path from "node:path";
 
 export const runtime = "nodejs";
-const screens = new Set(["welcome", "presets", "director", "record", "review", "customize", "processing", "preview"]);
+const screens = new Set(["welcome", "presets", "director", "record", "review", "customize", "processing", "preview", "remix"]);
 const stages = new Set(["queued", "validating", "preparing", "rendering", "finalizing", "completed", "failed"]);
 
 type DraftShot = { previewUrl: string; duration: number; name: string; analysis?: ShotAnalysis } | null;
-type DraftJob = { id: string; presetId?: string; challengeId?: string; stage: string; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics?: { queueWaitMs?: number; renderDurationMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number } };
-type SessionDraft = { presetId: string; title: string; creative: CreativeOptions; shots: DraftShot[]; activeShot: number; challenge?: string; screen: string; advancedGuidance: boolean; job?: DraftJob; renders: DraftJob[]; selectedCoverUrl?: string; achievements: string[]; publicDisplay: boolean; promoReuse: boolean };
+type DraftJob = { id: string; sourceId?: string; presetId?: string; challengeId?: string; stage: string; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics?: { queueWaitMs?: number; renderDurationMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number } };
+type SessionDraft = { presetId: string; title: string; creative: CreativeOptions; shots: DraftShot[]; activeShot: number; challenge?: string; screen: string; advancedGuidance: boolean; job?: DraftJob; remixJob?: DraftJob; favoriteId?: string; renders: DraftJob[]; selectedCoverUrl?: string; achievements: string[]; publicDisplay: boolean; promoReuse: boolean };
 
 function isSessionAsset(value: unknown, sessionId: string, prefix: "reel" | "cover"): value is string {
   if (typeof value !== "string") return false;
@@ -31,6 +31,7 @@ function parseJob(value: unknown, sessionId: string): DraftJob | undefined {
   const metrics = typeof input.metrics === "object" && input.metrics !== null ? input.metrics as DraftJob["metrics"] : undefined;
   return {
     id: input.id as string,
+    sourceId: typeof input.sourceId === "string" && /^[a-f0-9]{64}$/.test(input.sourceId) ? input.sourceId : undefined,
     challengeId: typeof input.challengeId === "string" ? input.challengeId.slice(0, 30) : undefined,
     presetId: PRESETS.some((preset) => preset.id === input.presetId) ? input.presetId as string : undefined,
     stage: String(input.stage),
@@ -68,6 +69,8 @@ function parseDraft(input: unknown, sessionId: string): SessionDraft {
     screen: value.screen as string,
     advancedGuidance: value.advancedGuidance === true,
     job,
+    remixJob: parseJob(value.remixJob, sessionId),
+    favoriteId: typeof value.favoriteId === "string" && /^[a-f0-9-]{36}$/.test(value.favoriteId) ? value.favoriteId : undefined,
     renders,
     selectedCoverUrl: isSessionAsset(value.selectedCoverUrl, sessionId, "cover") ? value.selectedCoverUrl : undefined,
     achievements,

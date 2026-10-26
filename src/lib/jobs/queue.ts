@@ -1,5 +1,6 @@
 import { access, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { CreativeOptions } from "@/lib/creative/options";
 import { probeVideo } from "@/lib/video/metadata";
 import { createSessionId, ensureSession, readJobRecord, writeJobRecord } from "@/lib/storage/session-storage";
@@ -12,7 +13,7 @@ import { countSafely } from "@/lib/festival/metrics";
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
 export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
 export type JobMetrics = { queueWaitMs?: number; renderDurationMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number };
-export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; creative: CreativeOptions; consent: ReelConsent; challengeId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
+export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; creative: CreativeOptions; consent: ReelConsent; challengeId?: string; sourceId?: string; sourceJobId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
 type Queue = { jobs: Map<string, ReelJob>; pending: string[]; running: number; ready?: Promise<void>; paused: boolean; draining: boolean };
 const global = globalThis as typeof globalThis & { reelQueue?: Queue };
 const queue: Queue = global.reelQueue ||= { jobs: new Map(), pending: [], running: 0, paused: false, draining: false };
@@ -77,17 +78,34 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
   await initializeQueue();
   return exclusive("render-admission", () => exclusive(`session:${input.sessionId}`, async () => {
     const directory = await ensureSession(input.sessionId);
-    const stamps = await Promise.all([1, 2, 3].map(async (shot) => { const file = await stat(path.join(directory, `shot-${shot}.mp4`)); return [file.size, file.mtimeMs]; }));
-    const fingerprint = JSON.stringify([input.presetId, input.title, input.creative, input.challengeId, stamps]);
+    let sourceId: string;
+    let sourceDirectory: string;
+    if (input.sourceJobId) {
+      const original = queue.jobs.get(input.sourceJobId);
+      if (!original || original.sessionId !== input.sessionId || original.stage !== "completed" || original.expiresAt <= Date.now()) throw new HttpError(404, "The original edit is unavailable in this session.");
+      if (!original.sourceId) throw new HttpError(409, "This older edit has no source snapshot. Generate a new edit from your saved clips to use Remix Lab.");
+      sourceId = original.sourceId; sourceDirectory = path.join(directory, `sources-${sourceId}`);
+      await Promise.all([1, 2, 3].map((shot) => access(path.join(sourceDirectory, `shot-${shot}.mp4`))));
+    } else {
+      const stamps = await Promise.all([1, 2, 3].map(async (shot) => { const file = await stat(path.join(directory, `shot-${shot}.mp4`)); return [file.size, file.mtimeMs]; }));
+      sourceId = createHash("sha256").update(JSON.stringify(stamps)).digest("hex");
+      sourceDirectory = path.join(directory, `sources-${sourceId}`);
+    }
+    const fingerprint = JSON.stringify([input.presetId, input.title, input.creative, input.challengeId, sourceId]);
     const duplicate = [...queue.jobs.values()].find((job) => job.sessionId === input.sessionId && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
     if (duplicate) return duplicate;
     if ([...queue.jobs.values()].some((job) => job.sessionId === input.sessionId && isActive(job))) throw new HttpError(429, "Your session already has an export processing. Wait for it to finish before starting another edit.");
     if (queue.paused || queue.draining) throw new HttpError(503, "The studio is temporarily paused. Your shots are saved; please try again shortly.");
     if (queue.running >= limit("MAX_CONCURRENT_RENDERS", 1, 4) && queue.pending.length >= limit("MAX_PENDING_RENDERS", 8, 100)) throw new HttpError(429, "The render queue is full. Your shots are saved. Please retry shortly.");
     const createdAt = Date.now();
-    const job: ReelJob = { ...input, fingerprint, id: createSessionId(), stage: "queued", metrics: {}, createdAt, expiresAt: createdAt + retentionMs() };
+    const job: ReelJob = { ...input, sourceId, fingerprint, id: createSessionId(), stage: "queued", metrics: {}, createdAt, expiresAt: createdAt + retentionMs() };
+    if (!input.sourceJobId) {
+      await mkdir(sourceDirectory, { recursive: true });
+      // Exclusive session admission makes this immutable snapshot atomic to renders and uploads.
+      await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(directory, `shot-${shot}.mp4`), path.join(sourceDirectory, `shot-${shot}.mp4`))));
+    }
     await mkdir(workspace(job), { recursive: true });
-    try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(directory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await save(job); }
+    try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(sourceDirectory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await save(job); }
     catch (error) { await rm(workspace(job), { recursive: true, force: true }); throw error; }
     queue.pending.push(job.id); pump(); return job;
   }));

@@ -1,22 +1,23 @@
 import { NextResponse } from "next/server";
-import { parseCreativeOptions } from "@/lib/creative/options";
+import { parseCreativeOptions, validateCreativeInput } from "@/lib/creative/options";
 import { createJob, getJob } from "@/lib/jobs/queue";
 import { getPreset } from "@/lib/presets";
 import { assertCompleteSession, assertSessionId, cleanupExpiredSessions } from "@/lib/storage/session-storage";
-import { errorResponse, requireSession } from "@/lib/server/security";
+import { errorResponse, requireSession, HttpError } from "@/lib/server/security";
 import { getChallenge } from "@/lib/creative/challenges";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; challengeId?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
+    const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; challengeId?: string; sourceJobId?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     const preset = getPreset(body.presetId || "");
     if (!preset) throw new Error("Choose a valid preset.");
-    await assertCompleteSession(sessionId);
-    const job = await createJob({ sessionId, presetId: body.presetId!, challengeId: getChallenge(body.challengeId)?.id, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, creative: parseCreativeOptions(body.creative, preset), consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
+    try { validateCreativeInput(body.creative); } catch (error) { throw new HttpError(400, (error as Error).message); }
+    if (!body.sourceJobId) await assertCompleteSession(sessionId);
+    const job = await createJob({ sessionId, presetId: body.presetId!, sourceJobId: typeof body.sourceJobId === "string" ? body.sourceJobId : undefined, challengeId: getChallenge(body.challengeId)?.id, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined, creative: parseCreativeOptions(body.creative, preset), consent: { publicDisplay: body.consent?.publicDisplay === true, promoReuse: body.consent?.promoReuse === true } });
     void cleanupExpiredSessions();
     return NextResponse.json({ job });
   } catch (error) {

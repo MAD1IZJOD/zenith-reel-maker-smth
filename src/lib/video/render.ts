@@ -5,6 +5,8 @@ import { getPreset, type ReelPreset } from "@/lib/presets";
 import { ensureSession } from "@/lib/storage/session-storage";
 import { probeVideo } from "./metadata";
 import { ffmpeg, runProcess } from "./process";
+import { createTimeline, type SyncMode } from "@/lib/creative/timeline";
+import { getSoundtrack, type MusicId } from "@/lib/creative/music";
 
 const font = (process.env.FFMPEG_FONT || (process.platform === "win32" ? "C:/Windows/Fonts/arialbd.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")).replace(/\\/g, "/").replace(/:/g, "\\:");
 const escapeText = (value: string) => value.replace(/['\\:]/g, "\\$&").replace(/[\r\n]/g, " ").slice(0, 52);
@@ -45,11 +47,15 @@ export type RenderRequest = {
   audioMode?: AudioMode;
   outputName?: string;
   sourceDirectory?: string;
+  syncMode?: SyncMode;
+  musicId?: MusicId;
+  customSeconds?: [number, number, number];
 };
 
-export async function renderReel({ sessionId, presetId, title, hook, captions, captionStyle = "cinematic", shotOrder = [0, 1, 2], audioMode = "muted", outputName, sourceDirectory }: RenderRequest): Promise<{ output: string; cover: string; covers: string[]; preset: ReelPreset }> {
+export async function renderReel({ sessionId, presetId, title, hook, captions, captionStyle = "cinematic", shotOrder = [0, 1, 2], audioMode = "muted", outputName, sourceDirectory, syncMode = "preset", musicId = "pulse", customSeconds = [2, 2, 2] }: RenderRequest): Promise<{ output: string; cover: string; covers: string[]; preset: ReelPreset }> {
   const preset = getPreset(presetId);
   if (!preset) throw new Error("Choose a valid reel preset.");
+  const timeline = createTimeline(preset, { syncMode, musicId, customSeconds });
   const directory = await ensureSession(sessionId);
   const sourceInputs = [1, 2, 3].map((shot) => path.join(sourceDirectory || directory, `shot-${shot}.mp4`));
   const inputs = shotOrder.map((index) => sourceInputs[index]);
@@ -63,24 +69,26 @@ export async function renderReel({ sessionId, presetId, title, hook, captions, c
   const sourceMetadata = await Promise.all(inputs.map((input) => probeVideo(input)));
   for (const [index, input] of inputs.entries()) {
     const includeOriginalAudio = audioMode === "original" && sourceMetadata[index].hasAudio;
-    await runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(preset.clipSeconds), "-vf", `${effectFilter(preset, captionFiles[index], captionStyle)},tpad=stop_mode=clone:stop_duration=${preset.clipSeconds}`, "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82,apad" : "volume=0", "-c:v", "libx264", "-threads", "2", "-filter_threads", "1", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
+    await runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(timeline.clipDurations[index]), "-vf", `${effectFilter(preset, captionFiles[index], captionStyle)},tpad=stop_mode=clone:stop_duration=${timeline.clipDurations[index]}`, "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82,apad" : "volume=0", "-c:v", "libx264", "-threads", "2", "-filter_threads", "1", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
   }
-  const transitionDuration = preset.id === "movie-trailer" ? 0.65 : 0.35;
-  const offsetOne = preset.clipSeconds - transitionDuration;
-  const offsetTwo = preset.clipSeconds * 2 - transitionDuration * 2;
+  const { transitionDuration } = timeline;
+  const [offsetOne, offsetTwo] = timeline.cutPositions;
   const chosenTitle = escapePath(titleFile);
   const chosenHook = escapePath(hookFile);
   const label = preset.effect === "retro" ? "REC  •  10.26.2026" : preset.effect === "trailer" ? "ZENITH AGENTIC REEL MAKER PRESENTS" : preset.eyebrow.toUpperCase();
   const overlay = `drawtext=fontfile='${font}':textfile='${chosenTitle}':expansion=none:fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.10:box=1:boxcolor=black@0.38:boxborderw=16,drawtext=fontfile='${font}':textfile='${chosenHook}':expansion=none:fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=22:x=(w-text_w)/2:y=h*0.18:box=1:boxcolor=black@0.28:boxborderw=8,drawtext=fontfile='${font}':text='${escapeText(label)}':fontcolor=${preset.effect === "retro" ? "0xF3D38A" : "0xC4F46D"}:fontsize=20:x=(w-text_w)/2:y=h*0.88`;
   const output = path.join(directory, outputName || "reel.mp4");
   const renderWithTransition = (transition: ReelPreset["transition"]) => {
-    const audioDuration = preset.clipSeconds * 3 - transitionDuration * 2;
-    const complex = `[0:v][1:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetOne}[mid];[mid][2:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetTwo},${overlay},format=yuv420p[v];[0:a][1:a][2:a]concat=n=3:v=0:a=1,atrim=duration=${audioDuration.toFixed(2)},afade=t=in:st=0:d=0.18,afade=t=out:st=${Math.max(0.1, audioDuration - 0.28).toFixed(2)}:d=0.28[a]`;
-    return runProcess(ffmpeg(), ["-y", "-i", normalizedInputs[0], "-i", normalizedInputs[1], "-i", normalizedInputs[2], "-filter_complex_threads", "1", "-filter_complex", complex, "-map", "[v]", "-map", "[a]", "-r", "30", "-c:v", "libx264", "-threads", "2", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", "-shortest", output], "FFmpeg render");
+    const audioDuration = timeline.totalDuration;
+    const track = getSoundtrack(musicId)!;
+    const musicInput = audioMode === "soundtrack" ? ["-i", path.join(process.cwd(), "public", track.url)] : [];
+    const audioFilter = audioMode === "soundtrack" ? `[3:a]atrim=duration=${audioDuration},asetpts=PTS-STARTPTS,volume=0.8` : `[0:a][1:a]acrossfade=d=${transitionDuration}:c1=tri:c2=tri[am];[am][2:a]acrossfade=d=${transitionDuration}:c1=tri:c2=tri,atrim=duration=${audioDuration}`;
+    const complex = `[0:v][1:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetOne}[mid];[mid][2:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetTwo},${overlay},format=yuv420p[v];${audioFilter},afade=t=in:st=0:d=0.18,afade=t=out:st=${Math.max(0.1, audioDuration - 0.28).toFixed(2)}:d=0.28[a]`;
+    return runProcess(ffmpeg(), ["-y", "-i", normalizedInputs[0], "-i", normalizedInputs[1], "-i", normalizedInputs[2], ...musicInput, "-filter_complex_threads", "1", "-filter_complex", complex, "-map", "[v]", "-map", "[a]", "-r", "30", "-c:v", "libx264", "-threads", "2", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", "-shortest", output], "FFmpeg render");
   };
   try { await renderWithTransition(preset.transition); } catch (error) { if (preset.transition === "fade") throw error; await renderWithTransition("fade"); }
   const baseName = path.basename(output, ".mp4");
-  const totalDuration = preset.clipSeconds * 3 - transitionDuration * 2;
+  const totalDuration = timeline.totalDuration;
   const positions = [0.55, totalDuration * 0.48, Math.max(0.6, totalDuration - 0.8)];
   const covers: string[] = [];
   for (const [index, position] of positions.entries()) {
