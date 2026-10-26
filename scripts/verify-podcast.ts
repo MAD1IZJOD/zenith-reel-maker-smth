@@ -12,6 +12,7 @@ import { GET as VIEW } from "../src/app/api/podcast/batches/[id]/route";
 import { GET as REEL } from "../src/app/api/podcast/batches/[id]/reels/[index]/route";
 import { GET as ZIP } from "../src/app/api/podcast/batches/[id]/zip/route";
 import { ingestFixture, transcribeAndWait } from "./verify-transcription";
+import { withPeakMemory } from "./benchmark-render";
 
 /**
  * The Stage 2 demonstration on real speech: one recording -> transcription -> three highlights -> three faceless,
@@ -28,24 +29,30 @@ async function main() {
   const source = await ingestFixture(sessionId, path.join(process.cwd(), "data", "fixtures", fixture));
   timings.ingestMs = Date.now() - started;
   started = Date.now();
-  const { record } = await transcribeAndWait(sessionId, source.id, "en");
-  assert.equal(record.transcript.status, "ready");
-  timings.transcribeMs = Date.now() - started;
+  const transcription = await withPeakMemory(() => transcribeAndWait(sessionId, source.id, "en"), ["python"]);
+  assert.equal(transcription.value.record.transcript.status, "ready");
+  timings.transcribeMs = Date.now() - started; timings.transcribePeakMB = transcription.peakMb ?? 0;
   started = Date.now();
-  const highlights = await (await HIGHLIGHTS(new Request("http://localhost", { method: "POST", headers: { Cookie: cookie }, body: JSON.stringify({ sessionId, preferences: { length, tone: "educational" } }) }), { params: Promise.resolve({ id: source.id }) })).json();
-  timings.highlightMs = Date.now() - started;
+  const analysis = await withPeakMemory(async () => (await HIGHLIGHTS(new Request("http://localhost", { method: "POST", headers: { Cookie: cookie }, body: JSON.stringify({ sessionId, preferences: { length, tone: "educational" } }) }), { params: Promise.resolve({ id: source.id }) })).json(), ["ollama", "llama-server"]);
+  const highlights = analysis.value;
+  timings.highlightMs = Date.now() - started; timings.analysisPeakMB = analysis.peakMb ?? 0;
   assert.ok(highlights.selected.length >= 1, highlights.notice);
   started = Date.now();
   const created = await (await CREATE(new Request("http://localhost", { method: "POST", headers: { Cookie: cookie }, body: JSON.stringify({ sessionId, sourceId: source.id, preferences: { length, tone: "educational" }, style: { visual, captionStyle: visual === "cinematic" ? "cinematic" : "clean-creator", soundtrack: "drift", musicVolume: 0.14 }, reels: highlights.selected.map((item: { id: string }) => ({ candidateId: item.id })) }) }))).json();
   assert.ok(created.batch, JSON.stringify(created));
   const firstReady: number[] = [];
-  let view = created.batch;
-  while (!view.reels.every((reel: { status: string }) => ["completed", "failed"].includes(reel.status))) {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    view = (await (await VIEW(new Request(`http://localhost/api/podcast/batches/${view.id}?sessionId=${sessionId}`, { headers: { Cookie: cookie } }), { params: Promise.resolve({ id: view.id }) })).json()).batch;
-    if (view.completed > firstReady.length) firstReady.push(Date.now() - started);
-  }
-  timings.batchMs = Date.now() - started;
+  const waitBatch = async (initial: typeof created.batch, marks: number[], since: number) => {
+    let current = initial;
+    while (!current.reels.every((reel: { status: string }) => ["completed", "failed"].includes(reel.status))) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      current = (await (await VIEW(new Request(`http://localhost/api/podcast/batches/${current.id}?sessionId=${sessionId}`, { headers: { Cookie: cookie } }), { params: Promise.resolve({ id: current.id }) })).json()).batch;
+      if (current.completed > marks.length) marks.push(Date.now() - since);
+    }
+    return current;
+  };
+  const rendered = await withPeakMemory(() => waitBatch(created.batch, firstReady, started));
+  const view = rendered.value;
+  timings.batchMs = Date.now() - started; timings.renderPeakMB = rendered.peakMb ?? 0;
   const reels = [];
   for (const reel of view.reels) {
     assert.equal(reel.status, "completed", reel.error);
@@ -56,6 +63,16 @@ async function main() {
     await runProcess(ffmpeg(), ["-y", "-v", "error", "-i", file, "-vf", `fps=${(6 / metadata.duration).toFixed(4)},scale=240:-2,tile=6x1`, "-frames:v", "1", path.join(out, `zenith-reel-0${reel.index}.jpg`)], "Demo sheet");
     reels.push({ reel: reel.index, role: reel.role, interval: `${reel.start.toFixed(1)}–${reel.end.toFixed(1)} s`, duration: metadata.duration, title: reel.title, hook: reel.hook, renderMs: reel.renderMs, sizeMB: Number(((reel.sizeBytes || 0) / 1048576).toFixed(2)), video: `${metadata.codecName} ${metadata.width}x${metadata.height}`, audio: metadata.hasAudio, file });
   }
+  // Warm path: another look for the same recording reuses the transcript and cached analysis; only rendering runs.
+  started = Date.now();
+  await HIGHLIGHTS(new Request("http://localhost", { method: "POST", headers: { Cookie: cookie }, body: JSON.stringify({ sessionId, preferences: { length, tone: "educational" } }) }), { params: Promise.resolve({ id: source.id }) });
+  timings.warmHighlightMs = Date.now() - started;
+  started = Date.now();
+  const second = await (await CREATE(new Request("http://localhost", { method: "POST", headers: { Cookie: cookie }, body: JSON.stringify({ sessionId, sourceId: source.id, preferences: { length, tone: "educational" }, style: { visual: visual === "minimal" ? "cinematic" : "minimal", captionStyle: "podcast-pop", soundtrack: "none" }, reels: highlights.selected.map((item: { id: string }) => ({ candidateId: item.id })) }) }))).json();
+  const warmMarks: number[] = [];
+  const warm = await waitBatch(second.batch, warmMarks, started);
+  assert.equal(warm.completed, warm.reels.length);
+  timings.warmBatchMs = Date.now() - started; timings.warmFirstReelReadyMs = warmMarks[0];
   const zip = await ZIP(new Request(`http://localhost/api/podcast/batches/${view.id}/zip?sessionId=${sessionId}`, { headers: { Cookie: cookie } }), { params: Promise.resolve({ id: view.id }) });
   await writeFile(path.join(out, "zenith-reels.zip"), Buffer.from(await zip.arrayBuffer()));
   const report = { fixture, visual, length, sourceSeconds: source.media!.duration, rankedBy: highlights.rankedBy, model: highlights.model, modelLatencyMs: highlights.modelLatencyMs, fallbackReason: highlights.fallbackReason, timings: { ...timings, firstReelReadyMs: firstReady[0] }, reels, zipBytes: (await readFile(path.join(out, "zenith-reels.zip"))).length };

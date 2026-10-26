@@ -25,17 +25,20 @@ const run = promisify(execFile);
 type Row = Record<string, string | number | boolean | undefined>;
 const rows: Row[] = [];
 
-/** Peak resident memory of FFmpeg processes while `task` runs (Windows tasklist / POSIX ps). */
-async function withPeakMemory<T>(task: () => Promise<T>): Promise<{ value: T; peakMb?: number }> {
+/** Peak combined resident memory of the named processes while `task` runs (Windows tasklist / POSIX ps). */
+export async function withPeakMemory<T>(task: () => Promise<T>, images: string[] = ["ffmpeg"]): Promise<{ value: T; peakMb?: number }> {
   let peak = 0, sampling = true;
   const sample = async () => {
     try {
       if (process.platform === "win32") {
-        const { stdout } = await run("tasklist", ["/FI", "IMAGENAME eq ffmpeg.exe", "/FO", "CSV", "/NH"], { windowsHide: true });
-        const total = [...stdout.matchAll(/"([\d,.\s]+) K"/g)].reduce((sum, match) => sum + Number(match[1].replace(/[^\d]/g, "")), 0);
+        let total = 0;
+        for (const image of images) {
+          const { stdout } = await run("tasklist", ["/FI", `IMAGENAME eq ${image}.exe`, "/FO", "CSV", "/NH"], { windowsHide: true });
+          total += [...stdout.matchAll(/"([\d,.\s]+) K"/g)].reduce((sum, match) => sum + Number(match[1].replace(/[^\d]/g, "")), 0);
+        }
         peak = Math.max(peak, total / 1024);
-      } else { const { stdout } = await run("ps", ["-C", "ffmpeg", "-o", "rss="]); peak = Math.max(peak, stdout.split("\n").reduce((sum, line) => sum + (Number(line) || 0), 0) / 1024); }
-    } catch { /* no ffmpeg running at this instant */ }
+      } else { const { stdout } = await run("ps", ["-C", images.join(","), "-o", "rss="]); peak = Math.max(peak, stdout.split("\n").reduce((sum, line) => sum + (Number(line) || 0), 0) / 1024); }
+    } catch { /* none running at this instant */ }
   };
   const loop = (async () => { while (sampling) { await sample(); await new Promise((resolve) => setTimeout(resolve, 150)); } })();
   try { const value = await task(); return { value, peakMb: peak ? Math.round(peak) : undefined }; } finally { sampling = false; await loop; }
@@ -122,4 +125,4 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
   console.log(`Saved ${file}`);
 }
-void main().then(() => process.exit(0), (error) => { console.error(error); process.exit(1); });
+if (process.argv[1]?.includes("benchmark-render")) void main().then(() => process.exit(0), (error) => { console.error(error); process.exit(1); });

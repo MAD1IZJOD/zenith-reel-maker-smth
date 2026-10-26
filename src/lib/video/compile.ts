@@ -41,7 +41,7 @@ function framing(edl: EditDecisionList, segment: EdlSegment, index: number, qual
   } else if (segment.crop === "abstract") {
     // Faceless: the footage reduced to a 1/16-scale, heavily blurred colour field. No person is recognisable.
     const smallW = even(W / 16), smallH = even(H / 16);
-    chain = `scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},boxblur=4:3,scale=${W}:${H}:flags=bicubic,eq=brightness=-0.08:saturation=0.7`;
+    chain = `scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},boxblur=4:3,eq=brightness=-0.08:saturation=0.7,${backgroundLook(edl)},scale=${W}:${H}:flags=bicubic`;
   } else {
     chain = `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=${flags},crop=${W}:${H}:(iw-ow)*${num(segment.focusX)}:(ih-oh)/2`;
   }
@@ -58,6 +58,11 @@ function framing(edl: EditDecisionList, segment: EdlSegment, index: number, qual
     case "none": break;
   }
   return chain;
+}
+
+/** Grade (without grain) and, for Cinematic, a vignette: applied to smooth faceless backgrounds before upscaling. */
+function backgroundLook(edl: EditDecisionList): string {
+  return [gradeFilter(edl.grade, false).replace(/,noise=[^,]+/g, ""), edl.composition === "cinematic" ? "vignette=PI/4.5" : ""].filter(Boolean).join(",");
 }
 
 /** Original, slowly moving gradient backgrounds for faceless compositions (no third-party imagery). */
@@ -135,7 +140,10 @@ export function compileEdl(edl: EditDecisionList, context: CompileContext): stri
       }
       graph.push(`[${video}]tpad=stop_mode=clone:stop_duration=${num(total)},trim=duration=${num(total)},setpts=PTS-STARTPTS[bg]`);
     } else {
-      graph.push(`gradients=s=${W}x${H}:r=${fps}:d=${num(total + 0.2)}:${GRADIENTS[edl.composition as keyof typeof GRADIENTS]},format=yuv420p,noise=alls=3:allf=t,setsar=1,trim=duration=${num(total)},setpts=PTS-STARTPTS[bg]`);
+      // Smooth backgrounds are generated, graded and vignetted at quarter resolution, then scaled up once. Measured on a
+      // 45 s reel, full-resolution vignette and grain alone cost ~13 s; the result is visually the same. Grain is Quality-only.
+      const quarterW = Math.round(W / 8) * 2, quarterH = Math.round(H / 8) * 2;
+      graph.push(`gradients=s=${quarterW}x${quarterH}:r=${fps}:d=${num(total + 0.2)}:${GRADIENTS[edl.composition as keyof typeof GRADIENTS]},format=yuv420p,${backgroundLook(edl)},scale=${W}:${H}:flags=bicubic${quality ? ",noise=alls=3:allf=t" : ""},setsar=1,trim=duration=${num(total)},setpts=PTS-STARTPTS[bg]`);
     }
     video = "bg";
   }
@@ -156,8 +164,9 @@ export function compileEdl(edl: EditDecisionList, context: CompileContext): stri
 
   // Look: accents, one consistent grade, texture; covers branch off before waveform, progress bar and text.
   const accents = edl.accents.map((time) => `if(between(t,${num(time)},${num(time + 0.14)}),0.3*(1-(t-${num(time)})/0.14),0)`);
-  const vignette = edl.composition === "cinematic" ? "vignette=PI/4.5" : "";
-  const look = [accents.length ? `eq=brightness='${accents.join("+")}':eval=frame` : "", gradeFilter(edl.grade, quality), vignette, quality ? "unsharp=5:5:0.35" : ""].filter(Boolean).join(",");
+  // Faceless backgrounds were already graded at low resolution; only real footage is graded at full size here.
+  const smoothBackground = edl.composition !== "video" && !brollInputs.length;
+  const look = smoothBackground ? "null" : [accents.length ? `eq=brightness='${accents.join("+")}':eval=frame` : "", gradeFilter(edl.grade, quality), quality ? "unsharp=5:5:0.35" : ""].filter(Boolean).join(",");
   const fonts = filterPath(context.fontsDir);
   graph.push(`[${video}]${look},split=2[graded][coverbase]`);
   let main = "graded";

@@ -83,7 +83,7 @@ export function keywords(text: string, count: number) {
 function phrases(units: Unit[]): { text: string; position: number }[] {
   const out: { text: string; position: number }[] = [];
   units.forEach((unit, position) => {
-    const sentence = cleanOverlayText(unit.text.replace(/[.…]+$/, ""), 160);
+    const sentence = cleanOverlayText(unit.text.replace(/[.…]+$/, ""), 4000); // never truncate before splitting: a cut tail would become a fake clause
     const clauses = sentence.split(/[,;:—]/).map((part) => cleanOverlayText(part, 160)).filter(Boolean);
     for (const raw of new Set([sentence, ...clauses])) {
       const text = raw.replace(/^(thus|hence|therefore|now|again|and|but|so)\s+/i, "").replace(/^\w/, (letter) => letter.toUpperCase());
