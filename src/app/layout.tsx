@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./creative.css";
 
 export const metadata: Metadata = {
   title: "ZENITH AGENTIC REEL MAKER",
