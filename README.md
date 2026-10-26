@@ -25,7 +25,9 @@ npm run smoke:render
 npm run build
 ```
 
-The smoke test uses the sample clips and verifies a real retro-cam export with FFprobe. Its output is written to `data/sessions/<random-session>/reel.mp4` and is intentionally not committed.
+Check the installed video dependencies with `Invoke-RestMethod http://localhost:3000/api/health`. It reports a non-200 result when FFmpeg or FFprobe cannot be started.
+
+`npm test` runs the preset unit test, renders all seven presets from the same three sample clips, verifies nonempty 720×1280 H.264 MP4s plus cover images, and starts an isolated local server to test upload validation, job lifecycle, output retrieval, and regeneration. Test outputs are written to `data/sessions/<random-session>/` and are intentionally not committed.
 
 ## Architecture
 

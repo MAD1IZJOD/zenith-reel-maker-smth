@@ -6,5 +6,5 @@ import { globalIgnores } from "eslint/config";
 const baseDirectory = path.dirname(fileURLToPath(import.meta.url));
 const compat = new FlatCompat({ baseDirectory });
 
-const config = [...compat.extends("next/core-web-vitals"), globalIgnores([".next/**", "data/**", "public/samples/**"])];
+const config = [...compat.extends("next/core-web-vitals"), globalIgnores([".next/**", ".next-api-test/**", "data/**", "public/samples/**"])];
 export default config;

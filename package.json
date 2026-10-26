@@ -8,10 +8,11 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/presets/presets.test.ts && tsx scripts/verify-render.ts",
+    "test": "tsx --test src/lib/presets/presets.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-api.ts",
     "generate:samples": "node scripts/generate-samples.mjs",
     "smoke:render": "tsx scripts/render-smoke.ts",
-    "verify:render": "tsx scripts/verify-render.ts"
+    "verify:render": "tsx scripts/verify-render.ts",
+    "verify:api": "tsx scripts/verify-api.ts"
   },
   "dependencies": {
     "@types/node": "^22.15.3",

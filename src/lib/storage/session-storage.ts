@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -12,6 +12,11 @@ export function assertSessionId(value: string): string {
 }
 export function sessionDirectory(sessionId: string): string { return path.join(root, assertSessionId(sessionId)); }
 export async function ensureSession(sessionId: string): Promise<string> { const directory = sessionDirectory(sessionId); await mkdir(directory, { recursive: true }); return directory; }
+export async function assertCompleteSession(sessionId: string): Promise<void> {
+  const directory = sessionDirectory(sessionId);
+  try { await Promise.all([1, 2, 3].map((shot) => access(path.join(directory, `shot-${shot}.mp4`)))); }
+  catch { throw new Error("Add all three shots before generating your reel."); }
+}
 export async function cleanupExpiredSessions(): Promise<void> {
   const retentionHours = Math.max(1, Number(process.env.RETENTION_HOURS || 24));
   const cutoff = Date.now() - retentionHours * 3_600_000;

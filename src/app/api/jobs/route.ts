@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createJob, getJob } from "@/lib/jobs/queue";
 import { getPreset } from "@/lib/presets";
-import { assertSessionId, cleanupExpiredSessions } from "@/lib/storage/session-storage";
+import { assertCompleteSession, assertSessionId, cleanupExpiredSessions } from "@/lib/storage/session-storage";
 
 export const runtime = "nodejs";
 
@@ -10,6 +10,7 @@ export async function POST(request: Request) {
     const body = await request.json() as { sessionId?: string; presetId?: string; title?: string };
     const sessionId = assertSessionId(body.sessionId || "");
     if (!getPreset(body.presetId || "")) throw new Error("Choose a valid preset.");
+    await assertCompleteSession(sessionId);
     const job = createJob({ sessionId, presetId: body.presetId!, title: typeof body.title === "string" ? body.title.slice(0, 52) : undefined });
     void cleanupExpiredSessions();
     return NextResponse.json({ job });
