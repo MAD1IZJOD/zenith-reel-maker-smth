@@ -35,3 +35,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Upload failed." }, { status: 400 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const sessionId = assertSessionId(url.searchParams.get("sessionId") || "");
+    const shot = Number(url.searchParams.get("shot"));
+    if (!Number.isInteger(shot) || shot < 1 || shot > 3) throw new Error("Shot must be 1, 2, or 3.");
+    const directory = await ensureSession(sessionId);
+    await rm(path.join(directory, `shot-${shot}.mp4`), { force: true });
+    return NextResponse.json({ cleared: true, shot });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not clear shot." }, { status: 400 });
+  }
+}

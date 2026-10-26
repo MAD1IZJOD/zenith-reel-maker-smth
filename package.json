@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts && tsx scripts/verify-render.ts",
+    "test": "tsx --test src/lib/presets/presets.test.ts src/lib/creative/options.test.ts src/lib/ai/studio.test.ts && tsx scripts/verify-render.ts && tsx scripts/verify-creative-render.ts",
     "generate:samples": "node scripts/generate-samples.mjs",
     "smoke:render": "tsx scripts/render-smoke.ts",
     "verify:render": "tsx scripts/verify-render.ts",

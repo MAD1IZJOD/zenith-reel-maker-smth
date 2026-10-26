@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
 import { probeVideo } from "../src/lib/video/metadata";
@@ -7,6 +7,7 @@ import { sessionDirectory } from "../src/lib/storage/session-storage";
 
 const port = 3101;
 const baseUrl = `http://127.0.0.1:${port}`;
+const nextEnvPath = path.join(process.cwd(), "next-env.d.ts");
 const log: string[] = [];
 function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
@@ -48,25 +49,27 @@ async function upload(sessionId: string, shot: number, contents: BlobPart, type 
   return fetch(`${baseUrl}/api/uploads`, { method: "POST", body: form });
 }
 
-async function waitForJob(id: string): Promise<{ outputUrl: string; coverUrl: string }> {
+async function waitForJob(id: string): Promise<{ outputUrl: string; coverUrl: string; coverUrls: string[] }> {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const response = await fetch(`${baseUrl}/api/jobs?id=${id}`);
     await expectStatus(response, 200, "job status");
-    const { job } = await response.json() as { job: { stage: string; error?: string; outputUrl?: string; coverUrl?: string } };
-    if (job.stage === "completed" && job.outputUrl && job.coverUrl) return { outputUrl: job.outputUrl, coverUrl: job.coverUrl };
+    const { job } = await response.json() as { job: { stage: string; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[] } };
+    if (job.stage === "completed" && job.outputUrl && job.coverUrl && job.coverUrls?.length === 3) return { outputUrl: job.outputUrl, coverUrl: job.coverUrl, coverUrls: job.coverUrls };
     if (job.stage === "failed") throw new Error(`API render failed: ${job.error}`);
   }
   throw new Error("API render did not complete before the test timeout.");
 }
 
 async function createJob(sessionId: string, presetId: string, title: string, consent = { publicDisplay: false, promoReuse: false }): Promise<{ id: string }> {
-  const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title, consent }) });
+  const creative = { vibe: "dramatic", hook: "API hook that renders", captions: ["FIRST", "SECOND", "THIRD"], captionStyle: "bold", shotOrder: [2, 0, 1], audioMode: "original" };
+  const response = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId, title, creative, consent }) });
   await expectStatus(response, 200, "job creation");
   return (await response.json() as { job: { id: string } }).job;
 }
 
 async function main() {
+  const originalNextEnv = await readFile(nextEnvPath, "utf8");
   try {
     await waitForHealth();
     await expectStatus(await fetch(`${baseUrl}/api/jobs?id=not-a-job-id`), 404, "invalid job lookup");
@@ -81,8 +84,12 @@ async function main() {
     await expectStatus(await upload(sessionId, 1, firstClip), 200, "valid first upload");
     const incomplete = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: "retro-cam" }) });
     await expectStatus(incomplete, 400, "incomplete session validation");
+    await expectStatus(await fetch(`${baseUrl}/api/uploads?sessionId=${sessionId}&shot=1`, { method: "DELETE" }), 200, "shot replacement cleanup");
+    const clearedSession = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, presetId: "retro-cam" }) });
+    await expectStatus(clearedSession, 400, "cleared shot validation");
+    await expectStatus(await upload(sessionId, 1, firstClip), 200, "re-upload after replacement");
     for (let shot = 2; shot <= 3; shot += 1) await expectStatus(await upload(sessionId, shot, await readFile(path.join(process.cwd(), "public", "samples", `shot-${shot}.mp4`))), 200, `valid upload ${shot}`);
-    const draft = { presetId: "retro-cam", title: "Recovered draft", shots: [1, 2, 3].map((shot) => ({ previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4`, duration: 4, name: `shot-${shot}.mp4` })), activeShot: 2, screen: "review", publicDisplay: false, promoReuse: false };
+    const draft = { presetId: "retro-cam", title: "Recovered draft", creative: { vibe: "nostalgic", hook: "Recovered hook", captions: ["A", "B", "C"], captionStyle: "retro", shotOrder: [1, 2, 0], audioMode: "muted" }, shots: [1, 2, 3].map((shot) => ({ previewUrl: `/api/reels/${sessionId}/shot-${shot}.mp4`, duration: 4, name: `shot-${shot}.mp4` })), activeShot: 2, screen: "review", advancedGuidance: true, renders: [], achievements: ["three-shot-finisher"], publicDisplay: false, promoReuse: false };
     const draftSave = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
     await expectStatus(draftSave, 200, "session draft save");
 
@@ -91,6 +98,11 @@ async function main() {
     const videoResponse = await fetch(`${baseUrl}${firstOutput.outputUrl}`);
     await expectStatus(videoResponse, 200, "output retrieval");
     if ((await videoResponse.arrayBuffer()).byteLength < 1_024) throw new Error("Retrieved export was unexpectedly small.");
+    for (const coverUrl of firstOutput.coverUrls) {
+      const coverResponse = await fetch(`${baseUrl}${coverUrl}`);
+      await expectStatus(coverResponse, 200, "cover retrieval");
+      if ((await coverResponse.arrayBuffer()).byteLength < 1_024) throw new Error("Retrieved cover was unexpectedly small.");
+    }
     const asset = firstOutput.outputUrl.split("/").at(-1)!;
     const metadata = await probeVideo(path.join(sessionDirectory(sessionId), asset));
     if (metadata.codecName !== "h264" || metadata.width !== 720 || metadata.height !== 1280 || metadata.duration <= 0) throw new Error(`Unexpected API export metadata: ${JSON.stringify(metadata)}`);
@@ -113,6 +125,7 @@ async function main() {
     console.log(JSON.stringify({ sessionId, firstOutput, secondOutput, metadata }, null, 2));
   } finally {
     await stopServer(server);
+    await writeFile(nextEnvPath, originalNextEnv, "utf8");
   }
 }
 
