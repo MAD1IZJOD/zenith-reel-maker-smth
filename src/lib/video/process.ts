@@ -6,7 +6,8 @@ export const mediaProcessStats = () => ({ ...videoProcesses });
 
 export function runProcess(command: string, args: string[], label: string, timeoutMs = 120_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true });
+    // stdin is ignored: FFmpeg otherwise listens for interactive keys and can stall with multiple outputs.
+    const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     children.add(child); global.studioPeakChildren = Math.max(global.studioPeakChildren || 0, children.size);
     let counted = command === ffmpeg() && !args.includes("-version");
     if (counted) { videoProcesses.active++; videoProcesses.peak = Math.max(videoProcesses.peak, videoProcesses.active); }

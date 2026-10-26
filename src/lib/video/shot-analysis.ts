@@ -1,6 +1,8 @@
 import type { VideoMetadata } from "./metadata";
 import type { ShotActivity, ShotAnalysis, ShotIssue } from "./shot-analysis-types";
+import { readFile, rm } from "node:fs/promises";
 import { ffmpeg, runProcess } from "./process";
+import { filterPath } from "./compile";
 
 export const ACTIVITY_STEP = 0.2;
 const MAX_SAMPLES = 900;
@@ -23,17 +25,23 @@ export function assessShot(metadata: VideoMetadata, luminance: number[] = [], ac
 const values = (output: string, key: string) => [...output.matchAll(new RegExp(`${key.replace(/\./g, "\\.")}=(-?[0-9.]+|-?inf)`, "g"))].map((match) => (match[1].endsWith("inf") ? -90 : Number(match[1]))).filter(Number.isFinite).slice(0, MAX_SAMPLES);
 
 /**
- * Light from three frames near the middle, plus whole-clip motion (mean luma difference between 5 fps samples)
- * and audio RMS every 0.2s. These feed automatic trimming; failures never invalidate decodable footage.
+ * One decode pass (one FFmpeg process, keeping upload work bounded) measures per-0.2 s luma and frame
+ * difference plus audio RMS. Light uses the samples nearest the clip's middle; motion and audio feed
+ * automatic trimming. Failures never invalidate footage that already passed decode validation.
  */
 export async function analyzeShot(file: string, metadata: VideoMetadata): Promise<ShotAnalysis> {
-  const [light, motion, audio] = await Promise.all([
-    runProcess(ffmpeg(), ["-v", "error", "-threads", "1", "-ss", String(Math.max(0, metadata.duration / 2 - 0.4)), "-i", file, "-an", "-t", "1", "-vf", "fps=3,scale=160:-2,signalstats,metadata=mode=print:file=-", "-filter_threads", "1", "-frames:v", "3", "-f", "null", "-"], "Shot light analysis", 15_000).then((output) => values(output, "lavfi.signalstats.YAVG")).catch(() => [] as number[]),
-    runProcess(ffmpeg(), ["-v", "error", "-threads", "1", "-i", file, "-an", "-vf", `fps=${1 / ACTIVITY_STEP},scale=96:-2,signalstats,metadata=mode=print:key=lavfi.signalstats.YDIF:file=-`, "-filter_threads", "1", "-f", "null", "-"], "Shot motion analysis", 60_000).then((output) => values(output, "lavfi.signalstats.YDIF")).catch(() => undefined),
-    metadata.hasAudio
-      ? runProcess(ffmpeg(), ["-v", "error", "-i", file, "-vn", "-af", `aresample=48000,asetnsamples=n=${48000 * ACTIVITY_STEP}:p=0,astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-`, "-f", "null", "-"], "Shot audio analysis", 60_000).then((output) => values(output, "lavfi.astats.Overall.RMS_level").map((value) => Math.max(-90, Math.round(value * 10) / 10))).catch(() => [] as number[])
-      : Promise.resolve([] as number[]),
-  ]);
-  const activity = motion && motion.length ? { step: ACTIVITY_STEP, motion: motion.map((value) => Math.round(value * 100) / 100), audio } : undefined;
-  return assessShot(metadata, light, activity);
+  const videoLog = `${file}.video-stats.txt`, audioLog = `${file}.audio-stats.txt`;
+  const graph = [`[0:v]fps=${1 / ACTIVITY_STEP},scale=96:-2,signalstats,metadata=mode=print:file='${filterPath(videoLog)}'[v]`];
+  if (metadata.hasAudio) graph.push(`[0:a]aresample=48000,asetnsamples=n=${48000 * ACTIVITY_STEP}:p=0,astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file='${filterPath(audioLog)}'[a]`);
+  try {
+    await runProcess(ffmpeg(), ["-v", "error", "-threads", "1", "-i", file, "-filter_complex", graph.join(";"), "-filter_complex_threads", "1", "-map", "[v]", "-f", "null", "-", ...(metadata.hasAudio ? ["-map", "[a]", "-f", "null", "-"] : [])], "Shot analysis", 60_000);
+    const video = await readFile(videoLog, "utf8");
+    const luma = values(video, "lavfi.signalstats.YAVG");
+    const middle = Math.round(metadata.duration / 2 / ACTIVITY_STEP);
+    const light = luma.slice(Math.max(0, middle - 2), middle + 3);
+    const motion = values(video, "lavfi.signalstats.YDIF").map((value) => Math.round(value * 100) / 100);
+    const audio = metadata.hasAudio ? values(await readFile(audioLog, "utf8").catch(() => ""), "lavfi.astats.Overall.RMS_level").map((value) => Math.max(-90, Math.round(value * 10) / 10)) : [];
+    return assessShot(metadata, light, motion.length ? { step: ACTIVITY_STEP, motion, audio } : undefined);
+  } catch { return assessShot(metadata); }
+  finally { await Promise.all([rm(videoLog, { force: true }), rm(audioLog, { force: true })]); }
 }

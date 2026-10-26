@@ -4,6 +4,9 @@ import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
 import { probeVideo } from "../src/lib/video/metadata";
 import { ffmpeg, runProcess } from "../src/lib/video/process";
+import { createTimeline } from "../src/lib/creative/timeline";
+import { defaultCreativeOptions } from "../src/lib/creative/options";
+import { getPreset } from "../src/lib/presets";
 
 const port = 3101;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -215,7 +218,7 @@ async function main() {
     for (const [index, input] of [rotated, landscape, webm].entries()) await expectStatus(await upload(mixed, index + 1, await readFile(input), index === 2 ? "video/webm" : "video/mp4"), 200, "mixed orientation/codec upload");
     const mixedJob = await createJob(mixed, "glow-up", "Mixed short footage"); const mixedOutput = await waitForJob(mixedJob.id);
     const mixedMetadata = await probeVideo(path.join(testRoot, "sessions", mixed, mixedOutput.outputUrl.split("/").at(-1)!));
-    if (mixedMetadata.width !== 720 || mixedMetadata.height !== 1280 || mixedMetadata.duration < 8 || mixedMetadata.codecName !== "h264") throw new Error("Mixed media export was invalid");
+    if (mixedMetadata.width !== 720 || mixedMetadata.height !== 1280 || Math.abs(mixedMetadata.duration - createTimeline(getPreset("glow-up")!, defaultCreativeOptions(getPreset("glow-up")!)).totalDuration) > 0.15 || mixedMetadata.codecName !== "h264") throw new Error("Mixed media export was invalid");
     console.log(JSON.stringify({ mixedOutput, mixedMetadata }));
     await stopServer(server);
     const interruptedId = randomUUID();
