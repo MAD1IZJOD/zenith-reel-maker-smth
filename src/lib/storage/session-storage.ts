@@ -30,8 +30,12 @@ export async function writeSessionDraft<T>(sessionId: string, draft: T): Promise
   await writeJson(sessionDraftPath(sessionId), draft);
 }
 export async function readSessionDraft<T>(sessionId: string): Promise<T | undefined> {
-  try { return JSON.parse(await readFile(sessionDraftPath(sessionId), "utf8")) as T; }
-  catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  // Same lock as writeJson: a restore that arrives while a save is being written reads the saved version.
+  const file = sessionDraftPath(sessionId);
+  return exclusive(`write:${file}`, async () => {
+    try { return JSON.parse(await readFile(file, "utf8")) as T; }
+    catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  });
 }
 export async function assertCompleteSession(sessionId: string): Promise<void> {
   const directory = sessionDirectory(sessionId);

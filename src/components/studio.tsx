@@ -78,6 +78,9 @@ export default function Studio({ festival = false, podcastEnabled = false }: { f
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const captureInput = useRef<HTMLInputElement>(null);
+  // The draft not yet sent to the server, and the shots it last saved: new shots are saved at once, not debounced.
+  const pendingDraft = useRef<{ url: string; body: string }>(undefined);
+  const savedShots = useRef(shots);
   const completedJobId = useRef<string | undefined>(undefined);
   const { stream, recording, recordSeconds, countdown, cameraError, setCameraError, openCamera, stopCamera, beginRecording, stopRecording, switchCamera } = useCamera((file, shot) => { void uploadFile(file, shot); }, activeShot);
   async function freshSession() {
@@ -139,11 +142,28 @@ export default function Studio({ festival = false, podcastEnabled = false }: { f
       current.searchParams.set("session", sessionId);
       window.history.replaceState(null, "", current);
     }
+    const draft = { url: `/api/sessions/${sessionId}`, body: JSON.stringify({ screen, presetId: preset.id, shots, activeShot, challenge: challenge?.title, title, creative, advancedGuidance, job, remixJob, favoriteId, renders, selectedCoverUrl, publicDisplay, promoReuse }) };
+    pendingDraft.current = draft;
+    // A finished upload is saved immediately so a refresh (or a phone discarding the tab) cannot lose that shot.
+    const delay = savedShots.current === shots ? 350 : 0;
+    savedShots.current = shots;
     const timer = window.setTimeout(() => {
-      void fetch(`/api/sessions/${sessionId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ screen, presetId: preset.id, shots, activeShot, challenge: challenge?.title, title, creative, advancedGuidance, job, remixJob, favoriteId, renders, selectedCoverUrl, publicDisplay, promoReuse }), signal: AbortSignal.timeout(15_000) }).then(settle).then((response) => { if (!response.ok) throw new Error(); }).catch(() => setNetworkMessage("Session save delayed. Keep this page open and check your connection."));
-    }, 350);
+      if (pendingDraft.current === draft) pendingDraft.current = undefined;
+      void fetch(draft.url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: draft.body, signal: AbortSignal.timeout(15_000) }).then(settle).then((response) => { if (!response.ok) throw new Error(); }).catch(() => setNetworkMessage("Session save delayed. Keep this page open and check your connection."));
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [activeShot, advancedGuidance, challenge, creative, job, remixJob, favoriteId, preset.id, promoReuse, publicDisplay, renders, restored, restoreProblem, screen, selectedCoverUrl, sessionId, shots, title]);
+
+  useEffect(() => {
+    // Leaving or reloading the page sends any draft still waiting for its debounce; keepalive outlives the page.
+    const flush = () => {
+      const draft = pendingDraft.current; if (!draft) return;
+      pendingDraft.current = undefined;
+      void fetch(draft.url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: draft.body, keepalive: true }).then(settle).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
 
   useEffect(() => {
     if (videoRef.current && stream) { videoRef.current.srcObject = stream; void videoRef.current.play().catch(() => setCameraError("Tap the preview to start the camera video.")); }
