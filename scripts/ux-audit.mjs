@@ -58,6 +58,8 @@ async function run(width) {
     }
     await inspect(page, width, "05-record-filled");
     await time("to-review", async () => { await page.getByRole("button", { name: /Review three shots/ }).click(); await page.getByText(/FOOTAGE REVIEW/).waitFor(); });
+    // Thumbnails must paint a real frame, not a black box.
+    await time("review-thumbnails", async () => { await page.waitForFunction(() => { const videos = [...document.querySelectorAll(".review-page video")]; return videos.length === 6 && videos.every((video) => video.readyState >= 2); }, null, { timeout: 15_000 }); });
     await inspect(page, width, "06-review");
     await time("to-customize", async () => { await page.getByRole("button", { name: /Customize reel/ }).click(); await page.getByText("Make the final cut.").waitFor(); });
     await inspect(page, width, "07-customize");

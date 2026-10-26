@@ -6,6 +6,7 @@ import { ArrowRight, Check, Film } from "lucide-react";
 import type { StudioShot } from "@/types/studio";
 import type { StudioAssist } from "@/lib/ai/studio";
 import type { ShotOrder } from "@/lib/creative/options";
+import { posterFrame } from "@/lib/client/media";
 
 gsap.registerPlugin(useGSAP);
 
@@ -27,7 +28,7 @@ export default function Storyboard({ shots, order, guides, active, onSelect, onC
     <div className="story-stage" role="group" aria-label="Choose a storyboard shot">
       {order.map((shotIndex, position) => <button type="button" key={shotIndex} className={`story-frame ${active === shotIndex ? "selected" : ""}`} aria-pressed={active === shotIndex} onClick={() => onSelect(shotIndex)} aria-label={`Storyboard position ${position + 1}, shot ${shotIndex + 1}${shots[shotIndex] ? ", complete" : ", ready"}`}>
         <span className="frame-top"><b>0{position + 1}</b>{shots[shotIndex] ? <Check size={16} /> : <Film size={16} />}</span>
-        {shots[shotIndex] ? <video key={shots[shotIndex]?.previewUrl} src={shots[shotIndex]?.previewUrl} muted playsInline preload="metadata" /> : <span className="frame-placeholder"><span className="viewfinder" /><b>{["OPENING", "ACTION", "PAYOFF"][position]}</b></span>}
+        {shots[shotIndex] ? <video key={shots[shotIndex]?.previewUrl} src={posterFrame(shots[shotIndex]?.previewUrl)} muted playsInline preload="metadata" /> : <span className="frame-placeholder"><span className="viewfinder" /><b>{["OPENING", "ACTION", "PAYOFF"][position]}</b></span>}
         <span className="frame-caption">{guides[shotIndex].title.replace(/^Shot \d: /, "")}</span>
       </button>)}
     </div>
