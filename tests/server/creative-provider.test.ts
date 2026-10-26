@@ -11,11 +11,12 @@ type Behaviour = "valid" | "think" | "invalid-json" | "bad-enum" | "slow" | "oom
 const valid = { hook: "Wait For It", hookAlternatives: ["One Crew", "The Reveal"], shotOrder: [2, 1, 3], pacing: "punchy", transitionStyle: "energetic", grade: "cool-cinematic", captionStyle: "high-energy", captions: ["Arrive", "Look", "Reveal"], rationale: "Strongest motion opens." };
 
 async function mockRuntime(behaviour: Behaviour) {
-  let active = 0, peak = 0, calls = 0;
+  let active = 0, peak = 0, calls = 0, releases = 0;
   const server = http.createServer(async (request, response) => {
     const send = (status: number, body: unknown) => { response.writeHead(status, { "Content-Type": "application/json" }); response.end(JSON.stringify(body)); };
     if (request.url === "/api/tags") return behaviour === "openai" ? send(404, { error: "not found" }) : send(200, { models: [{ name: "nomic-embed-text:latest" }, { name: "qwen3:8b" }] });
     if (request.url === "/v1/models") return send(200, { data: [{ id: "qwen3-8b-instruct" }] });
+    if (request.url === "/api/generate") { releases++; return send(200, { done: true, done_reason: "unload" }); }
     calls++; active++; peak = Math.max(peak, active);
     await new Promise((resolve) => setTimeout(resolve, behaviour === "slow" ? 1500 : 60));
     active--;
@@ -26,7 +27,7 @@ async function mockRuntime(behaviour: Behaviour) {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { url, close: () => new Promise<void>((resolve) => server.close(() => resolve())), stats: () => ({ peak, calls }) };
+  return { url, close: () => new Promise<void>((resolve) => server.close(() => resolve())), stats: () => ({ peak, calls, releases }) };
 }
 const provider = (url: string, timeoutMs = 1000) => new LocalModelProvider({ ...providerConfig({}), url, timeoutMs });
 const preset = getPreset("movie-trailer")!;
@@ -82,6 +83,7 @@ test("generations run one at a time and identical requests are cached", async ()
     assert.equal(runtime.stats().peak, 1);
     await planCreative(preset, "funny", analyses, undefined, client);
     assert.equal(runtime.stats().calls, 3);
+    assert.ok(runtime.stats().releases >= 1, "model memory is released after planning");
   } finally { await runtime.close(); }
 });
 

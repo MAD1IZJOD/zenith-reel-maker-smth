@@ -38,10 +38,14 @@ def transcribe_one(model, args, input_path, output_path, progress_path=None):
     output = []
     for segment in segments:
         if progress_path:
-            temporary_progress = progress_path + ".tmp"
-            with open(temporary_progress, "w", encoding="utf-8") as handle:
-                json.dump({"processed": round(float(segment.end), 2), "duration": round(float(info.duration), 2)}, handle)
-            os.replace(temporary_progress, progress_path)
+            # Best effort: on Windows the reader may briefly hold the file open; a missed update is harmless.
+            try:
+                temporary_progress = progress_path + ".tmp"
+                with open(temporary_progress, "w", encoding="utf-8") as handle:
+                    json.dump({"processed": round(float(segment.end), 2), "duration": round(float(info.duration), 2)}, handle)
+                os.replace(temporary_progress, progress_path)
+            except OSError:
+                pass
         words = [
             {"text": word.word.strip()[:80], "start": round(float(word.start), 3), "end": round(float(word.end), 3), "probability": round(float(word.probability), 3)}
             for word in (segment.words or [])

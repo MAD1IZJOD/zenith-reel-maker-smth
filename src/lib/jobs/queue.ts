@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { CreativeOptions } from "@/lib/creative/options";
@@ -10,12 +10,16 @@ import { exclusive } from "@/lib/server/store";
 import { HttpError } from "@/lib/server/security";
 import { countSafely } from "@/lib/festival/metrics";
 import { shotTranscripts } from "@/lib/transcription/clips";
-import { loadClips } from "@/lib/video/render";
+import { executeEdl, loadClips } from "@/lib/video/render";
+import type { EditDecisionList } from "@/lib/edit/edl";
+import { sourceMediaPath } from "@/lib/sources/store";
 
 export type JobStage = "queued" | "validating" | "preparing" | "rendering" | "finalizing" | "completed" | "failed";
 export type ReelConsent = { publicDisplay: boolean; promoReuse: boolean };
 export type JobMetrics = { queueWaitMs?: number; transcribeMs?: number; planMs?: number; renderDurationMs?: number; encodeMs?: number; verifyMs?: number; totalMs?: number; completedAt?: number; outputDurationSeconds?: number; outputBytes?: number; width?: number; height?: number };
-export type ReelJob = { id: string; sessionId: string; presetId: string; title?: string; creative: CreativeOptions; consent: ReelConsent; challengeId?: string; sourceId?: string; sourceJobId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
+/** A podcast highlight render: one validated EDL over imported sources, part of a three-reel batch. */
+export type HighlightPayload = { importId: string; brollIds: string[]; edl: EditDecisionList; batchId: string; reelIndex: number };
+export type ReelJob = { kind?: "clips" | "highlight"; highlight?: HighlightPayload; id: string; sessionId: string; presetId: string; title?: string; creative?: CreativeOptions; consent: ReelConsent; challengeId?: string; sourceId?: string; sourceJobId?: string; fingerprint?: string; stage: JobStage; error?: string; outputUrl?: string; coverUrl?: string; coverUrls?: string[]; metrics: JobMetrics; createdAt: number; expiresAt: number };
 type Queue = { jobs: Map<string, ReelJob>; pending: string[]; running: number; ready?: Promise<void>; paused: boolean; draining: boolean };
 const global = globalThis as typeof globalThis & { reelQueue?: Queue };
 const queue: Queue = global.reelQueue ||= { jobs: new Map(), pending: [], running: 0, paused: false, draining: false };
@@ -46,7 +50,34 @@ export async function initializeQueue() {
   })();
   await queue.ready;
 }
+async function runHighlight(job: ReelJob) {
+  const payload = job.highlight!;
+  const directory = path.join(dataRoot(), "sessions", job.sessionId);
+  try {
+    job.stage = "rendering"; job.metrics.queueWaitMs = Date.now() - job.createdAt; await save(job);
+    const reelName = `reel-${job.id}.mp4`, started = Date.now();
+    const sourcePaths = [sourceMediaPath(job.sessionId, payload.importId), ...payload.brollIds.map((id) => sourceMediaPath(job.sessionId, id))];
+    await Promise.all(sourcePaths.map((file) => access(file)));
+    const covers = await executeEdl(payload.edl, { sourcePaths, output: path.join(directory, reelName), workDirectory: workspace(job), coverPrefix: path.join(directory, `cover-reel-${job.id}`) });
+    job.metrics.encodeMs = Date.now() - started;
+    job.stage = "finalizing"; await save(job);
+    const verifyStarted = Date.now();
+    const [metadata, output] = await Promise.all([probeVideo(path.join(directory, reelName)), stat(path.join(directory, reelName))]);
+    if (metadata.codecName !== "h264" || metadata.width !== payload.edl.canvas.width || metadata.height !== payload.edl.canvas.height || output.size < 1024) throw new Error("Invalid export");
+    await writeFile(path.join(directory, `edl-reel-${job.id}.json`), JSON.stringify(payload.edl), "utf8");
+    Object.assign(job.metrics, { verifyMs: Date.now() - verifyStarted, width: metadata.width, height: metadata.height, renderDurationMs: Date.now() - started, totalMs: Date.now() - job.createdAt, outputDurationSeconds: metadata.duration, outputBytes: output.size, completedAt: Date.now() });
+    job.outputUrl = `/api/reels/${job.sessionId}/${reelName}`;
+    job.coverUrls = covers.map((cover) => `/api/reels/${job.sessionId}/${path.basename(cover)}`);
+    job.coverUrl = job.coverUrls[payload.edl.cover.selected];
+    job.stage = "completed"; await save(job); countSafely("reels_completed");
+  } catch (error) {
+    console.error("Highlight render failed", { jobId: job.id, reason: error instanceof Error ? error.message.split(":")[0] : "unknown" });
+    job.stage = "failed"; job.error = "This reel could not be rendered. The other reels and your source are unaffected; retry this one.";
+    await removePartial(job); await save(job); countSafely("render_failures");
+  } finally { await rm(workspace(job), { recursive: true, force: true }); }
+}
 async function run(job: ReelJob) {
+  if (job.kind === "highlight") return runHighlight(job);
   try {
     job.stage = "validating"; job.metrics.queueWaitMs = Date.now() - job.createdAt; await save(job);
     await Promise.all([1, 2, 3].map((shot) => access(path.join(workspace(job), `shot-${shot}.mp4`))));
@@ -55,13 +86,14 @@ async function run(job: ReelJob) {
     const started = Date.now();
     // Speech captions transcribe the immutable snapshot once; regenerations of the same footage reuse it.
     let transcripts: Awaited<ReturnType<typeof shotTranscripts>>["words"] | undefined;
-    if (job.creative.captionMode === "speech" && (job.creative.audioMode === "original" || job.creative.audioMode === "mix") && job.sourceId) {
+    const creative = job.creative!;
+    if (creative.captionMode === "speech" && (creative.audioMode === "original" || creative.audioMode === "mix") && job.sourceId) {
       job.stage = "preparing"; await save(job);
       const transcribeStarted = Date.now();
       transcripts = (await shotTranscripts(path.join(dataRoot(), "sessions", job.sessionId, `sources-${job.sourceId}`), (await loadClips(workspace(job))).map((clip) => clip.hasAudio))).words;
       job.metrics.transcribeMs = Date.now() - transcribeStarted;
     }
-    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...job.creative, transcripts, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
+    const rendered = await renderReel({ sessionId: job.sessionId, presetId: job.presetId, title: job.title, ...creative, transcripts, outputName: reelName, sourceDirectory: workspace(job), onStage: async (stage) => { job.stage = stage; await save(job); } });
     const verifyStarted = Date.now();
     const [metadata, output] = await Promise.all([probeVideo(rendered.output), stat(rendered.output)]);
     if (metadata.codecName !== "h264" || metadata.width !== rendered.edl.canvas.width || metadata.height !== rendered.edl.canvas.height || output.size < 1024) throw new Error("Invalid export");
@@ -90,7 +122,7 @@ function pump() {
 }
 export function queueStats() { return { running: queue.running, pending: queue.pending.length, maxConcurrent: limit("MAX_CONCURRENT_RENDERS", 1, 4), maxPending: limit("MAX_PENDING_RENDERS", 8, 100), paused: queue.paused, draining: queue.draining }; }
 export function pauseSubmissions(value: boolean) { queue.paused = value; }
-export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt" | "expiresAt" | "metrics" | "fingerprint">): Promise<ReelJob> {
+export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt" | "expiresAt" | "metrics" | "fingerprint" | "creative"> & { creative: CreativeOptions }): Promise<ReelJob> {
   await initializeQueue();
   return exclusive("render-admission", () => exclusive(`session:${input.sessionId}`, async () => {
     const directory = await ensureSession(input.sessionId);
@@ -112,9 +144,9 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
     for (const [index, start] of input.creative.trimStarts.entries()) {
       if (start > 0 && start > Math.max(0, (await probeVideo(path.join(trimSource, `shot-${index + 1}.mp4`))).duration - 0.5)) throw new HttpError(400, `Shot ${index + 1} starts too late. Leave at least half a second of footage.`);
     }
-    const duplicate = [...queue.jobs.values()].find((job) => job.sessionId === input.sessionId && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
+    const duplicate = [...queue.jobs.values()].find((job) => job.sessionId === input.sessionId && job.kind !== "highlight" && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
     if (duplicate) return duplicate;
-    if ([...queue.jobs.values()].some((job) => job.sessionId === input.sessionId && isActive(job))) throw new HttpError(429, "Your session already has an export processing. Wait for it to finish before starting another edit.");
+    if ([...queue.jobs.values()].some((job) => job.sessionId === input.sessionId && job.kind !== "highlight" && isActive(job))) throw new HttpError(429, "Your session already has an export processing. Wait for it to finish before starting another edit.");
     if (queue.paused || queue.draining) throw new HttpError(503, "The studio is temporarily paused. Your shots are saved; please try again shortly.");
     if (queue.running >= limit("MAX_CONCURRENT_RENDERS", 1, 4) && queue.pending.length >= limit("MAX_PENDING_RENDERS", 8, 100)) throw new HttpError(429, "The render queue is full. Your shots are saved. Please retry shortly.");
     const createdAt = Date.now();
@@ -128,6 +160,26 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
     await mkdir(workspace(job), { recursive: true });
     try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(sourceDirectory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await copyAnalyses(sourceDirectory, workspace(job)); await save(job); }
     catch (error) { await rm(workspace(job), { recursive: true, force: true }); throw error; }
+    queue.pending.push(job.id); pump(); return job;
+  }));
+}
+/**
+ * Queues one highlight reel. Identical edits are idempotent (the existing job is returned); a session may have at most
+ * three highlight renders in flight, and the global render bound still applies.
+ */
+export async function createHighlightJob(input: { sessionId: string; payload: HighlightPayload; title: string }): Promise<ReelJob> {
+  await initializeQueue();
+  return exclusive("render-admission", () => exclusive(`session:${input.sessionId}`, async () => {
+    const fingerprint = createHash("sha256").update(JSON.stringify([input.payload.importId, input.payload.brollIds, input.payload.edl])).digest("hex");
+    const jobs = [...queue.jobs.values()];
+    const duplicate = jobs.find((job) => job.sessionId === input.sessionId && job.kind === "highlight" && job.fingerprint === fingerprint && job.stage !== "failed" && job.expiresAt > Date.now());
+    if (duplicate) return duplicate;
+    if (jobs.filter((job) => job.sessionId === input.sessionId && job.kind === "highlight" && isActive(job)).length >= 3) throw new HttpError(429, "Three reels are already rendering for this session. Wait for one to finish.");
+    if (queue.paused || queue.draining) throw new HttpError(503, "The studio is temporarily paused. Your source is saved; please try again shortly.");
+    if (queue.pending.length >= limit("MAX_PENDING_RENDERS", 8, 100)) throw new HttpError(429, "The render queue is full. Please retry shortly.");
+    const createdAt = Date.now();
+    const job: ReelJob = { kind: "highlight", highlight: input.payload, id: createSessionId(), sessionId: input.sessionId, presetId: input.payload.edl.presetId, title: input.title, consent: { publicDisplay: false, promoReuse: false }, fingerprint, stage: "queued", metrics: {}, createdAt, expiresAt: createdAt + retentionMs() };
+    await save(job);
     queue.pending.push(job.id); pump(); return job;
   }));
 }

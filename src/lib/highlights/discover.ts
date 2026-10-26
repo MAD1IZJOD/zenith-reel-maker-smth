@@ -72,7 +72,7 @@ export function topicBoundaries(units: Unit[], span = 3): number[] {
 }
 
 /** Distinctive repeated words for topics and hashtags; adverbs and participles make poor tags. */
-function keywords(text: string, count: number) {
+export function keywords(text: string, count: number) {
   const counts = bag([text]);
   const usable = [...counts.entries()].filter(([word]) => word.length >= 4 && !/(ly|ed|ing|ous|ive|ible|able)$/.test(word));
   const repeated = usable.filter(([, value]) => value >= 2);
@@ -241,38 +241,36 @@ export function faithfulHook(hook: string, transcript: string): boolean {
   return tokens(clean).some((word) => words.has(word) || words.has(word.replace(/s$/, "")));
 }
 
-const rankingSchema = z.object({ rankings: z.array(z.object({ candidateId: z.string().length(16), editorialScore: z.number().int().min(0).max(100), hook: z.string().min(2).max(60), suggestedTitle: z.string().min(2).max(60), reasons: z.array(z.string().max(60)).max(3) })).min(1).max(6) });
-const rankingJsonSchema = {
-  type: "object", additionalProperties: false, required: ["rankings"],
-  properties: { rankings: { type: "array", minItems: 1, maxItems: 6, items: { type: "object", additionalProperties: false, required: ["candidateId", "editorialScore", "hook", "suggestedTitle", "reasons"], properties: { candidateId: { type: "string" }, editorialScore: { type: "integer", minimum: 0, maximum: 100 }, hook: { type: "string", maxLength: 52 }, suggestedTitle: { type: "string", maxLength: 52 }, reasons: { type: "array", maxItems: 3, items: { type: "string", maxLength: 40 } } } } } },
-};
+/**
+ * Compact ranking request. Measured on the target laptop (CPU, Qwen3 8B Q4): ~9 s cold load and ~6 output tokens/s,
+ * so the model returns only a score and an 8-word hook per candidate, and candidates are addressed by short aliases
+ * (c1..c6) that a JSON-schema enum restricts to the app's own windows. Titles stay in the speaker's words.
+ */
+const rankingSchema = (aliases: string[]) => z.object({ r: z.array(z.object({ id: z.enum(aliases as [string, ...string[]]), score: z.number().int().min(0).max(100), hook: z.string().min(2).max(80) })).min(1).max(aliases.length) });
+const rankingJsonSchema = (aliases: string[]) => ({
+  type: "object", additionalProperties: false, required: ["r"],
+  properties: { r: { type: "array", minItems: 1, maxItems: aliases.length, items: { type: "object", additionalProperties: false, required: ["id", "score", "hook"], properties: { id: { type: "string", enum: aliases }, score: { type: "integer", minimum: 0, maximum: 100 }, hook: { type: "string", maxLength: 60 } } } } },
+});
 
-/** Batches of six shortlisted windows; long recordings never send the whole transcript in one prompt. */
 async function rankWithModel(pool: Highlight[], preferences: Preferences, provider: LocalModelProvider): Promise<{ ranked: Highlight[]; model: string; latencyMs: number }> {
+  const batch = pool.slice(0, 6);
+  const aliases = batch.map((_, index) => `c${index + 1}`);
+  const result = await provider.structured({
+    name: "highlight_ranking", schema: rankingSchema(aliases), jsonSchema: rankingJsonSchema(aliases), maxTokens: 260, temperature: 0.2, timeoutMs: 90_000,
+    messages: [
+      { role: "system", content: "Score each clip 0-100 as a stand-alone short vertical video for a general, school-safe audience: strong opening, self-contained meaning, clear takeaway, curiosity, quotability. Hook: at most 8 words, faithful to what is said, no new facts or numbers. JSON only." },
+      { role: "user", content: JSON.stringify({ focus: preferences.tone, clips: batch.map((item, index) => ({ id: aliases[index], text: item.transcript.slice(0, 340) })) }) },
+    ],
+  });
   const ranked = new Map(pool.map((item) => [item.id, { ...item }]));
-  let latency = 0, model = "";
-  for (let index = 0; index < pool.length; index += 6) {
-    const batch = pool.slice(index, index + 6);
-    const result = await provider.structured({
-      name: "highlight_ranking", schema: rankingSchema, jsonSchema: rankingJsonSchema, maxTokens: 900, temperature: 0.2, timeoutMs: 60_000,
-      messages: [
-        { role: "system", content: "You are an editor choosing short vertical clips from a long recording for a general, school-safe audience. Score each candidate 0-100 for: strong opening, self-contained meaning, clear takeaway, emotional interest, curiosity, quotability, story structure, fit for short video, little missing context. Hooks and titles must be faithful to what is said: no new facts, numbers, names or exaggeration. Use only the given candidate ids. Reply with JSON only." },
-        { role: "user", content: JSON.stringify({ focus: preferences.tone, candidates: batch.map((item) => ({ candidateId: item.id, seconds: Math.round(item.duration), text: item.transcript.slice(0, 700) })) }) },
-      ],
-    });
-    latency += result.latencyMs; model = result.model;
-    for (const item of result.value.rankings) {
-      const candidate = ranked.get(item.candidateId);
-      if (!candidate || !batch.some((entry) => entry.id === item.candidateId)) continue; // hallucinated or out-of-batch ids are ignored
-      candidate.editorialScore = Math.round(0.6 * item.editorialScore + 0.4 * candidate.editorialScore);
-      if (faithfulHook(item.hook, candidate.transcript)) candidate.hook = cleanOverlayText(item.hook, 52);
-      if (faithfulHook(item.suggestedTitle, candidate.transcript)) candidate.title = cleanOverlayText(item.suggestedTitle, 52);
-      candidate.reasons = item.reasons.map((reason) => cleanOverlayText(reason, 60)).filter(Boolean).slice(0, 3);
-      candidate.rankedBy = "qwen";
-    }
+  for (const answer of result.value.r) {
+    const candidate = ranked.get(batch[aliases.indexOf(answer.id)].id)!;
+    candidate.editorialScore = Math.round(0.6 * answer.score + 0.4 * candidate.editorialScore);
+    if (faithfulHook(answer.hook, candidate.transcript)) candidate.hook = cleanOverlayText(answer.hook, 52);
+    candidate.reasons = [`local model score ${answer.score}`, ...candidate.reasons].slice(0, 3);
+    candidate.rankedBy = "qwen";
   }
-  if (![...ranked.values()].some((item) => item.rankedBy === "qwen")) throw new ProviderError("invalid-output", "Model ranking referenced no known candidates.");
-  return { ranked: [...ranked.values()], model, latencyMs: latency };
+  return { ranked: [...ranked.values()], model: result.model, latencyMs: result.latencyMs };
 }
 
 export async function discoverHighlights(input: { sourceId: string; sourceLabel: string; transcript: Transcript; preferences: Preferences; profile?: { step: number; rms: number[] }; useModel?: boolean; provider?: LocalModelProvider }): Promise<Discovery> {
@@ -283,6 +281,7 @@ export async function discoverHighlights(input: { sourceId: string; sourceLabel:
   if (input.useModel !== false && pool.length) {
     try { const result = await rankWithModel(pool, input.preferences, input.provider || creativeModel()); pool = result.ranked; rankedBy = "qwen"; model = result.model; modelLatencyMs = result.latencyMs; }
     catch (error) { fallbackReason = error instanceof ProviderError ? error.message : "Model ranking failed; the editorial heuristic was used."; }
+    finally { await (input.provider || creativeModel()).release(); }
   }
   pool.forEach((item) => { item.postCaption = postCaptionFor(item, input.sourceLabel); });
   const selected = selectDistinct(pool, 3);

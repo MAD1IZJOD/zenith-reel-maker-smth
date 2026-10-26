@@ -73,7 +73,8 @@ export function buildAss(edl: EditDecisionList, mode: "video" | "cover"): string
   const side = width * SAFE.side;
   const look = CAPTION_LOOKS[edl.captionStyle];
   const title = TITLE_LOOKS[edl.titleStyle];
-  const captionSize = look.size * k, titleSize = title.size * k;
+  // Faceless layouts have no subject to protect, so centred captions are set larger for phone-distance reading.
+  const captionSize = look.size * k * (edl.captionPosition === "center" ? 1.3 : 1), titleSize = title.size * k;
   // Faceless layouts have no subject to avoid, so captions sit at the visual centre; video keeps them low.
   const centered = edl.captionPosition === "center";
   const captionAlign = centered ? (look.align === "left" ? 4 : 5) : look.align === "left" ? 1 : 2;

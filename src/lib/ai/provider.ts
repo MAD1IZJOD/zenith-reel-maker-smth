@@ -47,7 +47,8 @@ async function request(url: string, init: RequestInit, timeoutMs: number): Promi
 
 // One generation at a time: a second concurrent 8B inference would only thrash memory on this class of laptop.
 let queue: Promise<unknown> = Promise.resolve();
-function singleFlight<T>(task: () => Promise<T>): Promise<T> { const next = queue.catch(() => undefined).then(task); queue = next; return next; }
+let waiting = 0;
+function singleFlight<T>(task: () => Promise<T>): Promise<T> { waiting++; const next = queue.catch(() => undefined).then(task).finally(() => { waiting--; }); queue = next; return next; }
 const cache = new Map<string, unknown>();
 const remember = (key: string, value: unknown) => { cache.set(key, value); if (cache.size > 64) cache.delete(cache.keys().next().value as string); };
 
@@ -81,6 +82,17 @@ export class LocalModelProvider {
     } catch (error) { return done({ available: false, reason: (error as Error).message }); }
   }
 
+  /**
+   * Unloads the model from memory right away. Called after ranking or planning so FFmpeg renders that follow are
+   * never starved: on a 24 GB laptop an 8B model holding ~6 GB caused real out-of-memory render failures.
+   */
+  async release(): Promise<void> {
+    if (this.resolved?.runtime !== "ollama" || waiting > 0) return;
+    // Queued behind any generation and skipped while others wait, so a model is never unloaded mid-answer.
+    const { model } = this.resolved;
+    await singleFlight(async () => { if (waiting > 1) return; await fetch(`${this.config.url}/api/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, keep_alive: 0 }), signal: AbortSignal.timeout(5000) }).catch(() => undefined); });
+  }
+
   /** Concise, schema-constrained JSON. Reasoning is disabled; results are validated and cached by request. */
   async structured<T>(input: StructuredRequest<T>): Promise<{ value: T; latencyMs: number; model: string; cached: boolean }> {
     const health = await this.health();
@@ -94,7 +106,7 @@ export class LocalModelProvider {
       const temperature = input.temperature ?? 0.4, maxTokens = input.maxTokens ?? 400;
       let text: string;
       if (runtime === "ollama") {
-        const reply = await request(`${this.config.url}/api/chat`, { method: "POST", body: JSON.stringify({ model, messages: input.messages, stream: false, think: false, format: input.jsonSchema, keep_alive: "10m", options: { temperature, num_ctx: this.config.contextTokens, num_predict: maxTokens } }) }, timeout) as { message?: { content?: string } };
+        const reply = await request(`${this.config.url}/api/chat`, { method: "POST", body: JSON.stringify({ model, messages: input.messages, stream: false, think: false, format: input.jsonSchema, keep_alive: "2m", options: { temperature, num_ctx: this.config.contextTokens, num_predict: maxTokens } }) }, timeout) as { message?: { content?: string } };
         text = reply.message?.content || "";
       } else {
         const reply = await request(`${this.config.url}/v1/chat/completions`, { method: "POST", body: JSON.stringify({ model, messages: input.messages, temperature, max_tokens: maxTokens, response_format: { type: "json_schema", json_schema: { name: input.name, schema: input.jsonSchema, strict: true } } }) }, timeout) as { choices?: { message?: { content?: string } }[] };

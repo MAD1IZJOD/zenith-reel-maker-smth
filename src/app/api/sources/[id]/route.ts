@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
-import { errorResponse, requireSession } from "@/lib/server/security";
+import { errorResponse, HttpError, requireSession } from "@/lib/server/security";
+import { isActive, listJobs } from "@/lib/jobs/queue";
 import { readSource, removeSource } from "@/lib/sources/store";
 
 export const runtime = "nodejs";
@@ -18,6 +19,11 @@ export async function GET(request: Request, context: Context) {
 }
 
 export async function DELETE(request: Request, context: Context) {
-  try { await removeSource(await authorize(request), (await context.params).id); return NextResponse.json({ removed: true }); }
+  try {
+    const sessionId = await authorize(request), id = (await context.params).id;
+    // Reels still rendering from this source (or using it as b-roll) keep it until they finish.
+    if ((await listJobs()).some((job) => job.sessionId === sessionId && isActive(job) && (job.highlight?.importId === id || job.highlight?.brollIds.includes(id)))) throw new HttpError(409, "Reels are still rendering from this source.");
+    await removeSource(sessionId, id); return NextResponse.json({ removed: true });
+  }
   catch (error) { return errorResponse(error, "Could not remove this source."); }
 }

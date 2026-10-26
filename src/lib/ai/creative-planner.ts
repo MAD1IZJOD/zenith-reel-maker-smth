@@ -98,5 +98,8 @@ export async function planCreative(preset: ReelPreset, vibe: CreativeVibe, analy
     };
   } catch (error) {
     return { ...fallback, fallbackReason: error instanceof ProviderError ? error.message : "The local model could not plan this edit." };
+  } finally {
+    // Free the model's memory before the visitor generates: renders must never compete with an idle 8B model.
+    await provider.release();
   }
 }

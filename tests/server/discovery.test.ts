@@ -78,23 +78,23 @@ test("hooks must stay faithful: no invented numbers or unrelated claims", () => 
   assert.equal(faithfulHook("Aliens built the pyramids", spoken), false);
 });
 
-test("model ranking may only reorder known candidates; unfaithful hooks and invented ids are discarded", async () => {
+test("model ranking may only score app-computed candidates; unfaithful hooks and invented ids are discarded", async () => {
   const transcript = fixture();
+  const reply = (body: unknown) => async () => {
+    const server = http.createServer((request, response) => { response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(request.url === "/api/tags" ? { models: [{ name: "qwen3:8b" }] } : { message: { content: JSON.stringify(body) } })); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const provider = new LocalModelProvider({ ...providerConfig({}), url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, timeoutMs: 3000 });
+    try { return await discoverHighlights({ sourceId: "source", sourceLabel: "Episode 1", transcript, preferences: { length: "short", tone: "general" }, provider }); }
+    finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  };
   const pool = shortlist(generateHighlights("source", "Episode 1", transcript, { length: "short", tone: "general" }), 12);
-  const known = pool[pool.length - 1];
-  const reply = { rankings: [
-    { candidateId: known.id, editorialScore: 100, hook: "This founder lost $10 million overnight", suggestedTitle: known.title, reasons: ["clear takeaway"] },
-    { candidateId: "ffffffffffffffff", editorialScore: 99, hook: "Invented", suggestedTitle: "Invented", reasons: [] },
-  ] };
-  const server = http.createServer((request, response) => { response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(request.url === "/api/tags" ? { models: [{ name: "qwen3:8b" }] } : { message: { content: JSON.stringify(reply) } })); });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  try {
-    const result = await discoverHighlights({ sourceId: "source", sourceLabel: "Episode 1", transcript, preferences: { length: "short", tone: "general" }, provider: new LocalModelProvider({ ...providerConfig({}), url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, timeoutMs: 3000 }) });
-    assert.equal(result.rankedBy, "qwen");
-    const ranked = result.pool.find((item) => item.id === known.id)!;
-    assert.equal(ranked.rankedBy, "qwen"); assert.notEqual(ranked.hook, "This founder lost $10 million overnight");
-    assert.ok(!result.pool.some((item) => item.id === "ffffffffffffffff"));
-  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  const scored = await reply({ r: [{ id: "c1", score: 97, hook: "This founder lost $10 million overnight" }, { id: "c2", score: 90, hook: "Protect the first hour" }] })();
+  assert.equal(scored.rankedBy, "qwen");
+  const first = scored.pool.find((item) => item.id === pool[0].id)!;
+  assert.equal(first.rankedBy, "qwen"); assert.notEqual(first.hook, "This founder lost $10 million overnight", "unfaithful hook rejected");
+  assert.match(first.reasons[0], /local model score 97/);
+  const invented = await reply({ r: [{ id: "c9", score: 99, hook: "Invented" }] })();
+  assert.equal(invented.rankedBy, "heuristic"); assert.ok(invented.fallbackReason);
 });
 
 test("visitor trims snap to silence between words and stay within bounds", () => {
