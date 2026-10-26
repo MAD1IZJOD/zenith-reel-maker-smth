@@ -1,0 +1,7 @@
+node_modules/
+.next/
+data/
+public/samples/*.mp4
+public/samples/*.jpg
+.env.local
+*.tsbuildinfo
