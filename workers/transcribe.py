@@ -24,7 +24,7 @@ def load_pcm(file_name):
     return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def transcribe_one(model, args, input_path, output_path):
+def transcribe_one(model, args, input_path, output_path, progress_path=None):
     started = time.time()
     segments, info = model.transcribe(
         load_pcm(input_path),
@@ -37,6 +37,11 @@ def transcribe_one(model, args, input_path, output_path):
     )
     output = []
     for segment in segments:
+        if progress_path:
+            temporary_progress = progress_path + ".tmp"
+            with open(temporary_progress, "w", encoding="utf-8") as handle:
+                json.dump({"processed": round(float(segment.end), 2), "duration": round(float(info.duration), 2)}, handle)
+            os.replace(temporary_progress, progress_path)
         words = [
             {"text": word.word.strip()[:80], "start": round(float(word.start), 3), "end": round(float(word.end), 3), "probability": round(float(word.probability), 3)}
             for word in (segment.words or [])
@@ -68,6 +73,7 @@ def main() -> int:
     parser.add_argument("--language", default=None)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--progress", help="JSON file updated with seconds of audio processed so far")
     args = parser.parse_args()
 
     from faster_whisper import WhisperModel  # imported after argument parsing so --help stays light
@@ -98,7 +104,7 @@ def main() -> int:
 
     model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=threads, num_workers=1)
     for input_path, output_path in pairs:
-        transcribe_one(model, args, input_path, output_path)
+        transcribe_one(model, args, input_path, output_path, args.progress if len(pairs) == 1 else None)
     return 0
 
 

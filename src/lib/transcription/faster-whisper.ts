@@ -34,9 +34,10 @@ export async function extractSpeechAudio(source: string, output: string, seconds
   await runProcess(ffmpeg(), ["-y", "-v", "error", "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", output], "Speech audio extraction", 60_000 + seconds * 1000);
 }
 
-export async function transcribeWithWhisper(audio: string, output: string, seconds: number, language?: string): Promise<Transcript> {
+export async function transcribeWithWhisper(audio: string, output: string, seconds: number, language?: string, progressFile?: string): Promise<Transcript> {
   const { python, worker, model, threads } = whisperConfig();
   const args = [worker, "--input", audio, "--output", output, "--model", model, "--threads", String(threads)];
+  if (progressFile) args.push("--progress", progressFile);
   if (language && /^[a-z]{2,3}$/.test(language)) args.push("--language", language);
   // CPU int8 speed varies widely; allow the first model download plus up to 3x real time.
   await runProcess(python, args, "Speech transcription", 300_000 + seconds * 3000);

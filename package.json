@@ -25,7 +25,8 @@
     "verify:transcription": "tsx scripts/verify-transcription.ts",
     "verify:highlights": "tsx scripts/verify-highlight-render.ts",
     "verify:speech": "tsx scripts/verify-speech-captions.ts",
-    "benchmark:render": "tsx scripts/benchmark-render.ts"
+    "benchmark:render": "tsx scripts/benchmark-render.ts",
+    "verify:url-ingest": "tsx scripts/verify-url-ingest.ts"
   },
   "engines": {
     "node": ">=20.9"

@@ -1,8 +1,8 @@
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { copyFile, rm } from "node:fs/promises";
 import { readJson, writeJson } from "@/lib/server/store";
 import { HttpError } from "@/lib/server/security";
-import { readSource, saveSource, sourceDirectory, sourceMediaPath, track, type SourceRecord } from "@/lib/sources/store";
+import { listSources, readSource, saveSource, sourceDirectory, sourceMediaPath, track, type SourceRecord } from "@/lib/sources/store";
 import { extractSpeechAudio, transcribeWithWhisper, transcriptionAvailability, whisperConfig } from "./faster-whisper";
 import { importTranscript, transcriptSchema, type Transcript } from "./schema";
 
@@ -37,6 +37,14 @@ export async function startTranscription(sessionId: string, id: string, language
     const reused = { ...record, transcript: summary(existing, record.transcript.processingMs) };
     await saveSource(reused); return reused;
   }
+  // The same recording imported again in this session reuses its finished transcript instead of re-running Whisper.
+  const twin = record.media.contentHash ? (await listSources(sessionId)).find((item) => item.id !== id && item.media?.contentHash === record.media!.contentHash && item.transcript.status === "ready" && item.transcript.engine === "faster-whisper" && item.transcript.model === whisperConfig().model) : undefined;
+  const twinTranscript = twin ? await readTranscript(sessionId, twin.id) : undefined;
+  if (twinTranscript) {
+    await copyFile(transcriptPath(sessionId, twin!.id), transcriptPath(sessionId, id));
+    const reused = { ...record, transcript: { ...summary(twinTranscript, 0), reusedFrom: "same-content" as const } };
+    await saveSource(reused); return reused;
+  }
   const available = await transcriptionAvailability();
   if (!available.available) throw new HttpError(503, available.reason || "Local transcription is unavailable.");
   if (waiting >= 3) throw new HttpError(429, "Several transcriptions are queued. Please try again shortly.");
@@ -52,12 +60,12 @@ export async function startTranscription(sessionId: string, id: string, language
       try {
         await saveSource({ ...queued, transcript: { ...queued.transcript, status: "running", updatedAt: Date.now() } });
         await extractSpeechAudio(sourceMediaPath(sessionId, id), audio, media.duration);
-        const transcript = await transcribeWithWhisper(audio, transcriptPath(sessionId, id), media.duration, language);
+        const transcript = await transcribeWithWhisper(audio, transcriptPath(sessionId, id), media.duration, language, path.join(sourceDirectory(sessionId, id), "transcribe-progress.json"));
         await saveSource({ ...queued, transcript: summary(transcript, Date.now() - started) });
       } catch (error) {
         console.error("Transcription failed", { source: id, reason: error instanceof Error ? error.message.split(":")[0] : "unknown" });
         await saveSource({ ...queued, transcript: { status: "failed", engine: "faster-whisper", model: queued.transcript.model, error: "Transcription failed. The source is unchanged; you can retry or import captions.", updatedAt: Date.now() } });
-      } finally { await rm(audio, { force: true }); }
+      } finally { await Promise.all([rm(audio, { force: true }), rm(path.join(sourceDirectory(sessionId, id), "transcribe-progress.json"), { force: true })]); }
     });
     chain = run;
     return run;

@@ -1,3 +1,5 @@
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdir, readdir, rm, rename, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -7,8 +9,8 @@ import { limit } from "@/lib/server/config";
 import { HttpError } from "@/lib/server/security";
 import { ffmpeg, ffprobe, runProcess } from "@/lib/video/process";
 
-export type SourceMedia = { duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; formatName: string; sizeBytes: number };
-export type TranscriptState = { status: "none" | "queued" | "running" | "ready" | "failed"; engine?: "faster-whisper" | "import"; model?: string; language?: string; words?: number; segments?: number; wordTimestamps?: boolean; processingMs?: number; error?: string; updatedAt?: number };
+export type SourceMedia = { duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; formatName: string; sizeBytes: number; contentHash?: string };
+export type TranscriptState = { status: "none" | "queued" | "running" | "ready" | "failed"; engine?: "faster-whisper" | "import"; model?: string; language?: string; words?: number; segments?: number; wordTimestamps?: boolean; processingMs?: number; processedSeconds?: number; reusedFrom?: "same-content"; error?: string; updatedAt?: number };
 export type SourceRecord = {
   id: string; sessionId: string; origin: "upload" | "url"; label: string; status: "ingesting" | "ready" | "failed"; error?: string;
   media?: SourceMedia; createdAt: number; rightsConfirmedAt: number; transcript: TranscriptState;
@@ -32,6 +34,11 @@ export async function readSource(sessionId: string, id: string): Promise<SourceR
   // Work interrupted by a restart is reported honestly rather than shown as still running.
   if (record.status === "ingesting" && !active.has(id)) return { ...record, status: "failed", error: "Import was interrupted. Please add the source again." };
   if ((record.transcript.status === "running" || record.transcript.status === "queued") && !active.has(`transcribe:${id}`)) return { ...record, transcript: { ...record.transcript, status: "failed", error: "Transcription was interrupted. Start it again." } };
+  if (record.transcript.status === "running") {
+    // The worker reports how far Whisper has actually progressed through the audio; nothing is estimated.
+    const progress = await readJson<{ processed: number }>(path.join(sourceDirectory(sessionId, id), "transcribe-progress.json")).catch(() => undefined);
+    if (progress && Number.isFinite(progress.processed)) return { ...record, transcript: { ...record.transcript, processedSeconds: Math.min(progress.processed, record.media?.duration ?? progress.processed) } };
+  }
   return record;
 }
 export async function saveSource(record: SourceRecord): Promise<void> { await writeJson(path.join(sourceDirectory(record.sessionId, record.id), "record.json"), record); }
@@ -53,7 +60,7 @@ export async function createSource(sessionId: string, origin: SourceRecord["orig
     await mkdir(sourceDirectory(sessionId, id), { recursive: true });
     const disk = await statfs(sourceRoot(sessionId));
     if (disk.bavail * disk.bsize < Math.max(1024 ** 3, expectedBytes * 3)) { await rm(sourceDirectory(sessionId, id), { recursive: true, force: true }); throw new HttpError(503, "Storage is nearly full. Please try a smaller file later."); }
-    const record: SourceRecord = { id, sessionId, origin, label: label.replace(/[^\p{L}\p{N} ._()-]/gu, "").slice(0, 80) || "Imported media", status: "ingesting", createdAt: Date.now(), rightsConfirmedAt: Date.now(), transcript: { status: "none" } };
+    const record: SourceRecord = { id, sessionId, origin, label: label.replace(/[^\p{L}\p{N} ._()·-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 80) || "Imported media", status: "ingesting", createdAt: Date.now(), rightsConfirmedAt: Date.now(), transcript: { status: "none" } };
     await saveSource(record);
     return record;
   });
@@ -94,6 +101,7 @@ export async function finishIngest(record: SourceRecord, file: string): Promise<
     const media = await probeMedia(file);
     if (!media.formatName.split(",").some((format) => SUPPORTED_FORMATS.includes(format))) throw new HttpError(400, "This file is not a supported audio or video container.");
     await validateDecode(file, media.duration);
+    media.contentHash = await hashFile(file);
     await rename(file, sourceMediaPath(record.sessionId, record.id));
     const ready: SourceRecord = { ...record, status: "ready", media, error: undefined };
     await saveSource(ready);
@@ -104,4 +112,11 @@ export async function finishIngest(record: SourceRecord, file: string): Promise<
     await saveSource(failed);
     return failed;
   }
+}
+
+/** SHA-256 of the media bytes, used to reuse analysis when the same recording is imported again in a session. */
+export async function hashFile(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
