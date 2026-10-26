@@ -1,14 +1,14 @@
 # Zenith Agentic Reel Maker
 
-A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical 720 × 1280 H.264/AAC MP4. Regenerate from the same footage without recording again.
+A festival reel studio with a real FFmpeg export pipeline. Choose one of seven styles, record or upload three shots, customize the edit, then preview and download a vertical H.264/AAC MP4: Fast (720 × 1280) or Quality (1080 × 1920). Regenerate from the same footage without recording again. A second mode, **Create from video / podcast** (`/podcast`), imports a recording, transcribes it locally and proposes sentence-aligned highlight moments.
 
-**Three shots. Infinite stories.** Phase 5 adds an interactive spatial storyboard, measured Shot Coach, two-output Remix Lab, soundtrack Beat Lab, and a non-destructive Finishing Studio. The five creative roles are deterministic tools, not a paid or simulated LLM service.
+**Three shots. Infinite stories.** Stage 1 replaced the renderer with a validated Edit Decision List compiled into one FFmpeg pass: measured auto-trim, per-style pacing, curated transitions, consistent colour grades, libass typography with bundled open fonts, word-highlighted speech captions from real timestamps, and speech-safe audio mixing. Creative planning uses a local Qwen model when one can run and transparent rules otherwise. See `deploy/STAGE1_REPORT.md`.
 
 Visitor entry: `/festival`. The ordinary creator entry remains at `/`. Staff controls are at `/operator`, the projector screen at `/display`, and privacy information at `/privacy`.
 
 ## Run locally
 
-Requirements: Node.js 20.9+; FFmpeg/FFprobe with libx264, AAC, drawtext and xfade; Arial Bold on Windows or DejaVu Sans Bold on Linux. FFmpeg is configured with `FFMPEG_PATH`, `FFPROBE_PATH` and optional `FFMPEG_FONT`.
+Requirements: Node.js 20.9+; FFmpeg/FFprobe (5.1 or newer) with libx264, AAC, libass (`subtitles`), xfade, colortemperature and sidechaincompress. Typography uses the OFL fonts bundled in `public/fonts` (licences alongside). FFmpeg is configured with `FFMPEG_PATH` and `FFPROBE_PATH`. Optional: Ollama with a Qwen model for creative planning, and Python 3.11/3.12 for local transcription (below).
 
 ```powershell
 npm ci
@@ -19,7 +19,7 @@ Open `http://localhost:3000/festival`. The repository bundles original synthetic
 
 Camera access requires HTTPS or localhost. A phone visiting a laptop's HTTP LAN address cannot use browser recording; gallery upload and the phone-camera file-input fallback remain available according to browser capabilities. Camera recordings intentionally do not request a microphone. Uploaded clips can retain their original audio.
 
-Copy `.env.example` to `.env.local` only when configuring paths and limits. No external AI credential is required. Operator routes stay disabled until a random `OPERATOR_SECRET` of at least 32 characters is configured. The optional leaderboard defaults to disabled.
+Copy `.env.example` to `.env.local` only when configuring paths and limits. No external AI credential is required; every model runs locally and everything falls back to deterministic behaviour when it cannot. Operator routes stay disabled until a random `OPERATOR_SECRET` of at least 32 characters is configured. The optional leaderboard defaults to disabled.
 
 ## Verify
 
@@ -31,6 +31,11 @@ npm run verify:api
 npm run verify:remix
 npm run verify:beats
 npm run verify:finishing
+npm run verify:aesthetics   # 18 real exports: black frames, geometry, audio, ending; contact sheets
+npm run benchmark:render    # measured timings on this machine
+npm run fixtures:fetch      # optional CC-BY real-footage fixtures (Tears of Steel)
+npm run verify:transcription && npm run verify:highlights && npm run verify:speech
+npm run verify:qwen         # live local model check; reports a fallback honestly
 npm run build
 npx playwright install chromium
 npm run verify:browser
@@ -79,12 +84,33 @@ The Director, Editor, Hook, Caption and Cover roles are deterministic modules. T
 
 Opening titles run for 1–4 seconds, shortened if necessary to avoid the last 1.5-second closing title. Shot starts must leave at least 0.5 seconds of source footage; shorter remaining footage is held to fill the chosen edit. Standard export is 720 × 1280/30fps H.264/AAC only. There is no pretend high-quality export control.
 
+## Local AI, transcription and podcast sources
+
+**Creative model (optional).** With `CREATIVE_MODEL_PROVIDER=auto` the server discovers a Qwen model in Ollama (`http://127.0.0.1:11434`) or an OpenAI-compatible server. It receives measured shot facts (duration, light, motion, speech), never pixels, and must answer with schema-validated JSON choosing from trusted options. Slow, invalid or failed answers, including out-of-memory model loads, fall back to transparent rules. `npm run verify:qwen` shows which one answered. An 8B model needs roughly 6 GB of free memory.
+
+**Transcription (optional).** faster-whisper runs on the CPU from an isolated, git-ignored environment:
+
+```powershell
+uv venv --python 3.12 .venv-transcribe
+uv pip install --python .venv-transcribe\Scripts\python.exe "faster-whisper==1.2.*"
+```
+
+The `base` model (about 145 MB, downloaded to the user's Hugging Face cache on first use) is the default; set `TRANSCRIBE_MODEL` to `tiny`, `small` or an `.en` variant. Transcripts are stored per source and reused. Without the environment, speech captions fall back to title cards and the podcast page offers SRT/WebVTT/JSON import.
+
+**Video/podcast sources.** Upload (streamed to disk, up to `MAX_SOURCE_MB`/`MAX_SOURCE_MINUTES`) or import a direct public media link. Links are restricted to http(s) on standard ports; private, loopback, link-local and metadata addresses are refused, redirects are re-validated and DNS rebinding is blocked at connect time. Video-platform page links (YouTube, Spotify, Instagram, …) are deliberately not downloaded. Every source requires confirmation that the visitor owns it or has permission. Stage 1 delivers import, transcription and highlight candidates; generating three finished reels from them is Stage 2.
+
+**Higgsfield (optional, billable).** `src/lib/providers/higgsfield.ts` implements the documented Kling 4.0 video-edit API. It is disabled unless `ENABLE_HIGGSFIELD=true` with API credentials from console.higgsfield.ai, needs an explicit spend authorization per request, and is never part of the fast export path.
+
 ## Architecture
 
 - `src/components/studio.tsx` and `src/hooks/use-camera.ts`: shared creator workflow and owned media-stream lifecycle.
 - `src/components/creative`: landing, lazy spatial storyboard, Shot Coach, Remix Lab, Beat Lab, Finishing Studio and honest Agent Crew states.
 - `src/hooks/use-studio-motion.ts`: scoped finite GSAP animations, cleanup and reduced-motion media queries. The 3D presentation uses CSS perspective and native video, not WebGL textures; essential controls require no GPU capability detection.
 - `src/lib/creative/timeline.ts`: one edit-decision timeline shared by the ruler and FFmpeg; `options.ts` validates submitted settings while restoring legacy drafts with defaults.
+- `src/lib/edit`: Edit Decision List schema (`edl.ts`), curated styles and grades (`styles.ts`) and the deterministic planners for clip reels and long-form highlights (`planner.ts`).
+- `src/lib/video/compile.ts`, `ass.ts`, `render.ts`, `mezzanine.ts`: EDL to one FFmpeg graph, libass typography and captions, job rendering, and aspect-preserving upload normalization.
+- `src/lib/ai/provider.ts`, `creative-planner.ts`: local model discovery, structured output and rules fallback.
+- `src/lib/sources`, `transcription`, `highlights`, `providers`: safe ingestion, faster-whisper worker interface (`workers/transcribe.py`), highlight candidates and the optional Higgsfield adapter.
 - `src/lib/video/shot-analysis.ts`: source metadata plus up to three small luminance samples; no aesthetic scoring, face recognition or semantic/stability analysis.
 - `src/lib/presets`, `creative`, `ai`: declarative edit configuration, safe deterministic guidance and completion rules.
 - `src/app/api/uploads`, `src/lib/video`: bounded validation, decode/normalization, rendering and cover extraction.
