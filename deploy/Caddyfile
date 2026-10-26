@@ -1,0 +1,20 @@
+{$STUDIO_DOMAIN} {
+  request_body {
+    max_size 90MB
+  }
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    Referrer-Policy "no-referrer"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+  }
+  reverse_proxy studio:3000 {
+    # Replace, rather than append, untrusted client forwarding headers.
+    header_up X-Forwarded-For {remote_host}
+    transport http {
+      dial_timeout 10s
+      response_header_timeout 240s
+    }
+  }
+  # Deliberately no access log: request paths can contain retrieval capabilities.
+}

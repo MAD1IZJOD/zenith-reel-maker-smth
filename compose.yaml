@@ -1,0 +1,42 @@
+services:
+  studio:
+    build: .
+    image: squad-reel-studio:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    stop_grace_period: 200s
+    environment:
+      PUBLIC_BASE_URL: https://${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
+      OPERATOR_SECRET: ${OPERATOR_SECRET:?Set a random operator secret of at least 32 characters}
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "true"
+      MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-1}
+      MAX_PENDING_RENDERS: ${MAX_PENDING_RENDERS:-8}
+      MAX_CONCURRENT_UPLOADS: "2"
+      MAX_UPLOAD_MB: "80"
+      MAX_CLIP_DURATION: "90"
+      RETENTION_HOURS: "24"
+      ENABLE_LEADERBOARD: ${ENABLE_LEADERBOARD:-false}
+    volumes:
+      - studio_data:/app/data
+    expose:
+      - "3000"
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      STUDIO_DOMAIN: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      studio:
+        condition: service_healthy
+volumes:
+  studio_data:
+  caddy_data:
+  caddy_config:
