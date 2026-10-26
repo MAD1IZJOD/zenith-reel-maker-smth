@@ -94,7 +94,8 @@ export async function renderReel(request: RenderRequest): Promise<RenderResult> 
     await writeFile(path.join(directory, `edl-${baseName}.json`), JSON.stringify(edl), "utf8");
     return { output, cover: covers[edl.cover.selected], covers, preset, edl, timings: { planMs, renderMs: Date.now() - renderStarted } };
   } finally {
-    await rm(workDirectory, { recursive: true, force: true });
+    // Inside the session folder that retention removes: a locked temp file must not fail a finished render.
+    await rm(workDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
   }
 }
 

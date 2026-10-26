@@ -47,7 +47,7 @@ export async function PUT(request: Request) {
         return await finishIngest(record, target!);
       } catch (error) {
         // An incomplete transfer leaves nothing behind: the partial file and its record are removed.
-        await rm(sourceDirectory(sessionId, record.id), { recursive: true, force: true });
+        await rm(sourceDirectory(sessionId, record.id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
         throw error;
       }
     });

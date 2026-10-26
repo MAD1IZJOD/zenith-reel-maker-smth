@@ -59,7 +59,7 @@ export async function cleanupExpiredSessions(): Promise<void> {
     await exclusive(`session:${entry.name}`, async () => {
       const folder = path.join(root, entry.name);
       const access = await readJson<{ expiresAt: number }>(recordPath("access", entry.name));
-      if (access ? access.expiresAt <= Date.now() : (await stat(folder)).mtimeMs < cutoff) await rm(folder, { recursive: true, force: true });
+      if (access ? access.expiresAt <= Date.now() : (await stat(folder)).mtimeMs < cutoff) await rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
   }
   for (const collection of ["access", "retrieval", "premieres", "leaderboard"]) {

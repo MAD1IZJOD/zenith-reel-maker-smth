@@ -49,7 +49,7 @@ export async function listSources(sessionId: string): Promise<SourceRecord[]> {
 }
 export async function removeSource(sessionId: string, id: string): Promise<void> {
   if (active.has(id) || active.has(`transcribe:${id}`)) throw new HttpError(409, "This source is still being processed.");
-  await rm(sourceDirectory(sessionId, id), { recursive: true, force: true });
+  await rm(sourceDirectory(sessionId, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 /** Creates a record after rights confirmation and capacity checks. */
@@ -59,7 +59,7 @@ export async function createSource(sessionId: string, origin: SourceRecord["orig
     const id = randomUUID();
     await mkdir(sourceDirectory(sessionId, id), { recursive: true });
     const disk = await statfs(sourceRoot(sessionId));
-    if (disk.bavail * disk.bsize < Math.max(1024 ** 3, expectedBytes * 3)) { await rm(sourceDirectory(sessionId, id), { recursive: true, force: true }); throw new HttpError(503, "Storage is nearly full. Please try a smaller file later."); }
+    if (disk.bavail * disk.bsize < Math.max(1024 ** 3, expectedBytes * 3)) { await rm(sourceDirectory(sessionId, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); throw new HttpError(503, "Storage is nearly full. Please try a smaller file later."); }
     const record: SourceRecord = { id, sessionId, origin, label: label.replace(/[^\p{L}\p{N} ._()·-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 80) || "Imported media", status: "ingesting", createdAt: Date.now(), rightsConfirmedAt: Date.now(), transcript: { status: "none" } };
     await saveSource(record);
     return record;

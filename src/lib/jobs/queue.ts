@@ -74,7 +74,7 @@ async function runHighlight(job: ReelJob) {
     console.error("Highlight render failed", { jobId: job.id, reason: error instanceof Error ? error.message.split(":")[0] : "unknown" });
     job.stage = "failed"; job.error = "This reel could not be rendered. The other reels and your source are unaffected; retry this one.";
     await removePartial(job); await save(job); countSafely("render_failures");
-  } finally { await rm(workspace(job), { recursive: true, force: true }); }
+  } finally { await rm(workspace(job), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined); }
 }
 async function run(job: ReelJob) {
   if (job.kind === "highlight") return runHighlight(job);
@@ -110,7 +110,7 @@ async function run(job: ReelJob) {
     console.error("Render failed", { jobId: job.id, stage: job.stage, reason: error instanceof Error ? error.message.split(":")[0] : "unknown", code: (error as NodeJS.ErrnoException).code, operation: (error as NodeJS.ErrnoException).syscall });
     job.stage = "failed"; job.error = "Export failed or timed out. Your original clips are saved. Please retry.";
     await removePartial(job); await save(job); countSafely("render_failures");
-  } finally { await rm(workspace(job), { recursive: true, force: true }); }
+  } finally { await rm(workspace(job), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined); }
 }
 function pump() {
   const maximum = limit("MAX_CONCURRENT_RENDERS", 1, 4);
@@ -159,7 +159,7 @@ export async function createJob(input: Omit<ReelJob, "id" | "stage" | "createdAt
     }
     await mkdir(workspace(job), { recursive: true });
     try { await Promise.all([1, 2, 3].map((shot) => copyFile(path.join(sourceDirectory, `shot-${shot}.mp4`), path.join(workspace(job), `shot-${shot}.mp4`)))); await copyAnalyses(sourceDirectory, workspace(job)); await save(job); }
-    catch (error) { await rm(workspace(job), { recursive: true, force: true }); throw error; }
+    catch (error) { await rm(workspace(job), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); throw error; }
     queue.pending.push(job.id); pump(); return job;
   }));
 }
