@@ -4,7 +4,7 @@ A local, production-minded festival reel maker. Visitors choose one of seven str
 
 ## Quick start
 
-Prerequisites: Node.js 20+ and FFmpeg 6+ with `ffprobe` available in `PATH`. On Windows, use a static FFmpeg build and restart the terminal after adding it to `PATH`.
+Prerequisites: Node.js 20+ and FFmpeg 6+ with `ffprobe` available in `PATH`. On Windows, use a static FFmpeg build and restart the terminal after adding it to `PATH`. Three small MP4 demo clips are bundled; `generate:samples` recreates them if you want fresh local test assets.
 
 ```powershell
 npm install
