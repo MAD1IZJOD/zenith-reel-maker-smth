@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { crossOriginReason } from "@/lib/server/origin";
+import { blockedForPublic } from "@/lib/server/local-only";
 
 export function middleware(request: NextRequest) {
+  // Not found, rather than forbidden, so a public visitor learns nothing about operator screens.
+  if (blockedForPublic(request.nextUrl.pathname, request.headers)) return NextResponse.json({ error: "Not found." }, { status: 404, headers: { "Cache-Control": "no-store" } });
   const blocked = crossOriginReason(request.method, request.headers, request.nextUrl.origin);
   if (blocked) return NextResponse.json({ error: blocked }, { status: 403 });
   const response = NextResponse.next();
