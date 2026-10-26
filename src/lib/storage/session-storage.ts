@@ -1,7 +1,8 @@
 import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { dataRoot } from "@/lib/server/config";
+import { dataRoot, retentionMs } from "@/lib/server/config";
+import { exclusive, readJson, recordPath } from "@/lib/server/store";
 
 const root = path.join(dataRoot(), "sessions");
 const tokenPattern = /^[a-f0-9-]{36}$/i;
@@ -45,24 +46,33 @@ export async function assertCompleteSession(sessionId: string): Promise<void> {
   catch { throw new Error("Add all three shots before generating your reel."); }
 }
 export async function cleanupExpiredSessions(): Promise<void> {
-  const retentionHours = Math.max(1, Number(process.env.RETENTION_HOURS || 24));
-  const cutoff = Date.now() - retentionHours * 3_600_000;
-  try {
-    const entries = await readdir(root, { withFileTypes: true });
-    await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
-      const folder = path.join(root, entry.name);
-      if ((await stat(folder)).mtimeMs < cutoff) await rm(folder, { recursive: true, force: true });
-    }));
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  const cutoff = Date.now() - retentionMs();
+  const protectedSessions = new Set<string>();
+  await mkdir(jobsRoot, { recursive: true });
+  for (const record of await readdir(jobsRoot)) {
+    if (!/^[a-f0-9-]{36}\.json$/i.test(record)) continue;
+    const location = path.join(jobsRoot, record);
+    const job = await readJson<{ sessionId: string; expiresAt: number; stage: string }>(location);
+    if (job && !["completed", "failed"].includes(job.stage)) protectedSessions.add(job.sessionId);
+    else if (job && job.expiresAt <= Date.now()) await rm(location, { force: true });
   }
-  try {
-    const records = await readdir(jobsRoot, { withFileTypes: true });
-    await Promise.all(records.filter((record) => record.isFile() && record.name.endsWith(".json")).map(async (record) => {
-      const location = path.join(jobsRoot, record.name);
-      if ((await stat(location)).mtimeMs < cutoff) await rm(location, { force: true });
-    }));
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  await mkdir(root, { recursive: true });
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !tokenPattern.test(entry.name) || protectedSessions.has(entry.name)) continue;
+    await exclusive(`session:${entry.name}`, async () => {
+      const folder = path.join(root, entry.name);
+      const access = await readJson<{ expiresAt: number }>(recordPath("access", entry.name));
+      if (access ? access.expiresAt <= Date.now() : (await stat(folder)).mtimeMs < cutoff) await rm(folder, { recursive: true, force: true });
+    });
+  }
+  for (const collection of ["access", "retrieval", "premieres", "leaderboard"]) {
+    const directory = path.join(dataRoot(), collection);
+    await mkdir(directory, { recursive: true });
+    for (const entry of await readdir(directory)) {
+      if (!/^[a-f0-9-]{36,64}\.json$/i.test(entry)) continue;
+      const location = path.join(directory, entry);
+      const record = await readJson<{ expiresAt?: number; id?: string }>(location);
+      if (record?.expiresAt && record.expiresAt <= Date.now() && !(record.id && protectedSessions.has(record.id))) await rm(location, { force: true });
+    }
   }
 }

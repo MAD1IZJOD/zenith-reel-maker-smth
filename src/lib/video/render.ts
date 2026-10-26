@@ -6,7 +6,7 @@ import { ensureSession } from "@/lib/storage/session-storage";
 import { probeVideo } from "./metadata";
 import { ffmpeg, runProcess } from "./process";
 
-const font = "C\\:/Windows/Fonts/arialbd.ttf";
+const font = (process.env.FFMPEG_FONT || (process.platform === "win32" ? "C:/Windows/Fonts/arialbd.ttf" : "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")).replace(/\\/g, "/").replace(/:/g, "\\:");
 const escapeText = (value: string) => value.replace(/['\\:]/g, "\\$&").replace(/[\r\n]/g, " ").slice(0, 52);
 
 function captionFilter(caption: string, style: CaptionStyle): string {
@@ -43,23 +43,24 @@ export type RenderRequest = {
   shotOrder?: ShotOrder;
   audioMode?: AudioMode;
   outputName?: string;
+  sourceDirectory?: string;
 };
 
-export async function renderReel({ sessionId, presetId, title, hook, captions, captionStyle = "cinematic", shotOrder = [0, 1, 2], audioMode = "muted", outputName }: RenderRequest): Promise<{ output: string; cover: string; covers: string[]; preset: ReelPreset }> {
+export async function renderReel({ sessionId, presetId, title, hook, captions, captionStyle = "cinematic", shotOrder = [0, 1, 2], audioMode = "muted", outputName, sourceDirectory }: RenderRequest): Promise<{ output: string; cover: string; covers: string[]; preset: ReelPreset }> {
   const preset = getPreset(presetId);
   if (!preset) throw new Error("Choose a valid reel preset.");
   const directory = await ensureSession(sessionId);
-  const sourceInputs = [1, 2, 3].map((shot) => path.join(directory, `shot-${shot}.mp4`));
+  const sourceInputs = [1, 2, 3].map((shot) => path.join(sourceDirectory || directory, `shot-${shot}.mp4`));
   const inputs = shotOrder.map((index) => sourceInputs[index]);
-  const normalized = path.join(directory, "normalized");
+  const normalized = path.join(sourceDirectory || directory, outputName ? `normalized-${path.basename(outputName, ".mp4")}` : "normalized");
   await mkdir(normalized, { recursive: true });
   const normalizedInputs = inputs.map((_, index) => path.join(normalized, `shot-${index + 1}.mp4`));
   const orderedCaptions = shotOrder.map((index) => captions?.[index] || preset.captions[index]);
   const sourceMetadata = await Promise.all(inputs.map((input) => probeVideo(input)));
-  await Promise.all(inputs.map((input, index) => {
+  for (const [index, input] of inputs.entries()) {
     const includeOriginalAudio = audioMode === "original" && sourceMetadata[index].hasAudio;
-    return runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(preset.clipSeconds), "-vf", effectFilter(preset, orderedCaptions[index], captionStyle), "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82" : "volume=0", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
-  }));
+    await runProcess(ffmpeg(), ["-y", "-autorotate", "-i", input, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", String(preset.clipSeconds), "-vf", `${effectFilter(preset, orderedCaptions[index], captionStyle)},tpad=stop_mode=clone:stop_duration=${preset.clipSeconds}`, "-map", "0:v:0", "-map", includeOriginalAudio ? "0:a:0" : "1:a:0", "-af", includeOriginalAudio ? "loudnorm=I=-16:TP=-1.5:LRA=11,volume=0.82,apad" : "volume=0", "-c:v", "libx264", "-threads", "2", "-filter_threads", "1", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p", normalizedInputs[index]], "FFmpeg normalization");
+  }
   const transitionDuration = preset.id === "movie-trailer" ? 0.65 : 0.35;
   const offsetOne = preset.clipSeconds - transitionDuration;
   const offsetTwo = preset.clipSeconds * 2 - transitionDuration * 2;
@@ -71,17 +72,18 @@ export async function renderReel({ sessionId, presetId, title, hook, captions, c
   const renderWithTransition = (transition: ReelPreset["transition"]) => {
     const audioDuration = preset.clipSeconds * 3 - transitionDuration * 2;
     const complex = `[0:v][1:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetOne}[mid];[mid][2:v]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offsetTwo},${overlay},format=yuv420p[v];[0:a][1:a][2:a]concat=n=3:v=0:a=1,atrim=duration=${audioDuration.toFixed(2)},afade=t=in:st=0:d=0.18,afade=t=out:st=${Math.max(0.1, audioDuration - 0.28).toFixed(2)}:d=0.28[a]`;
-    return runProcess(ffmpeg(), ["-y", "-i", normalizedInputs[0], "-i", normalizedInputs[1], "-i", normalizedInputs[2], "-filter_complex", complex, "-map", "[v]", "-map", "[a]", "-r", "30", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", "-shortest", output], "FFmpeg render");
+    return runProcess(ffmpeg(), ["-y", "-i", normalizedInputs[0], "-i", normalizedInputs[1], "-i", normalizedInputs[2], "-filter_complex_threads", "1", "-filter_complex", complex, "-map", "[v]", "-map", "[a]", "-r", "30", "-c:v", "libx264", "-threads", "2", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart", "-shortest", output], "FFmpeg render");
   };
   try { await renderWithTransition(preset.transition); } catch (error) { if (preset.transition === "fade") throw error; await renderWithTransition("fade"); }
   const baseName = path.basename(output, ".mp4");
   const totalDuration = preset.clipSeconds * 3 - transitionDuration * 2;
   const positions = [0.55, totalDuration * 0.48, Math.max(0.6, totalDuration - 0.8)];
-  const covers = await Promise.all(positions.map(async (position, index) => {
+  const covers: string[] = [];
+  for (const [index, position] of positions.entries()) {
     const cover = path.join(directory, `cover-${baseName}-${index + 1}.jpg`);
     const coverOverlay = `drawtext=fontfile='${font}':text='${chosenTitle}':fontcolor=white:fontsize=43:x=(w-text_w)/2:y=h*0.12:box=1:boxcolor=black@0.42:boxborderw=16`;
     await runProcess(ffmpeg(), ["-y", "-ss", position.toFixed(2), "-i", output, "-frames:v", "1", "-vf", coverOverlay, "-q:v", "2", cover], "FFmpeg cover extraction");
-    return cover;
-  }));
+    covers.push(cover);
+  }
   return { output, cover: covers[0], covers, preset };
 }

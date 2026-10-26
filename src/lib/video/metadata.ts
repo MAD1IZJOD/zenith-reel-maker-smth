@@ -1,4 +1,5 @@
 import { ffprobe, runProcess } from "./process";
+import { limit } from "@/lib/server/config";
 
 export type VideoMetadata = { duration: number; formatName: string; width: number; height: number; codecName: string; hasAudio: boolean };
 
@@ -7,7 +8,8 @@ export async function probeVideo(file: string): Promise<VideoMetadata> {
   const json = JSON.parse(output) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; codec_name?: string; width?: number; height?: number }[] };
   const stream = json.streams?.find((entry) => entry.codec_type === "video");
   const duration = Number(json.format?.duration);
-  if (!stream || !Number.isFinite(duration) || duration <= 0 || duration > 90 || !stream.width || !stream.height) throw new Error("Video must contain a visual track between 1 second and 90 seconds.");
+  const maxDuration = limit("MAX_CLIP_DURATION", 90, 180);
+  if (!stream || !Number.isFinite(duration) || duration < 0.5 || duration > maxDuration || !stream.width || !stream.height || stream.width * stream.height > 33_200_000) throw new Error(`Video must have a decodable visual track from 0.5 to ${maxDuration} seconds, up to 8K resolution.`);
   return {
     duration,
     formatName: json.format?.format_name || "unknown",

@@ -22,7 +22,7 @@ function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),
     windowsHide: true,
-    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1" },
+    env: { ...process.env, NEXT_DIST_DIR: ".next-api-test", MAX_UPLOAD_MB: "1", MAX_CONCURRENT_RENDERS: "1", MAX_PENDING_RENDERS: "1" },
   });
   child.stdout.on("data", (chunk) => log.push(chunk.toString()));
   child.stderr.on("data", (chunk) => log.push(chunk.toString()));
@@ -55,7 +55,12 @@ async function upload(sessionId: string, shot: number, contents: BlobPart, type 
   form.set("sessionId", sessionId);
   form.set("shot", String(shot));
   form.set("file", new Blob([contents], { type }), `shot-${shot}.mp4`);
-  return fetch(`${baseUrl}/api/uploads`, { method: "POST", body: form });
+  for (let retry = 0; retry < 30; retry++) {
+    const response = await fetch(`${baseUrl}/api/uploads`, { method: "POST", body: form });
+    if (response.status !== 429) return response;
+    await response.text(); await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  throw new Error("Upload admission did not recover");
 }
 
 async function waitForJob(id: string): Promise<{ outputUrl: string; coverUrl: string; coverUrls: string[] }> {
@@ -132,6 +137,28 @@ async function main() {
     const secondJob = await createJob(sessionId, "movie-trailer", "API regenerated test");
     const secondOutput = await waitForJob(secondJob.id);
     if (firstOutput.outputUrl === secondOutput.outputUrl) throw new Error("Regeneration reused the previous output path.");
+    const concurrentSessions = await Promise.all([0, 1, 2].map(async () => {
+      const id = await newSession();
+      for (let shot = 1; shot <= 3; shot++) await expectStatus(await upload(id, shot, firstClip), 200, "concurrent visitor upload");
+      return id;
+    }));
+    const requests = await Promise.all(concurrentSessions.map((id) => fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id, presetId: "main-character", title: "Concurrency test" }) })));
+    const admitted: { sessionId: string; id: string }[] = []; let rejected = 0;
+    for (const [index, response] of requests.entries()) {
+      if (response.ok) admitted.push({ sessionId: concurrentSessions[index], id: (await response.json()).job.id });
+      else { await expectStatus(response, 429, "bounded queue admission"); rejected++; }
+    }
+    if (admitted.length !== 2 || rejected !== 1) throw new Error(`Unexpected admission counts: ${admitted.length}/${rejected}`);
+    const duplicate = await fetch(`${baseUrl}/api/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: admitted[0].sessionId, presetId: "main-character", title: "Concurrency test" }) });
+    if ((await duplicate.json()).job.id !== admitted[0].id) throw new Error("Duplicate submission created a new job");
+    const concurrentOutputs = await Promise.all(admitted.map((item) => waitForJob(item.id)));
+    if (concurrentOutputs[0].outputUrl === concurrentOutputs[1].outputUrl) throw new Error("Concurrent outputs collided");
+    for (const [index, output] of concurrentOutputs.entries()) {
+      const other = admitted[1 - index].sessionId;
+      const wrongBrowser = await rawFetch(`${baseUrl}${output.outputUrl}`, { headers: { Cookie: `srs-${other}=${cookies.get(`srs-${other}`)}` } });
+      await expectStatus(wrongBrowser, 401, "cross-session access denied");
+    }
+    console.log(JSON.stringify({ concurrentSessions: concurrentSessions.length, admitted: admitted.length, overloaded: rejected, concurrentOutputs }, null, 2));
     await stopServer(server);
     server = startServer();
     await waitForHealth();
