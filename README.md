@@ -6,6 +6,8 @@ A festival reel studio with a real FFmpeg export pipeline. Choose one of seven s
 
 Visitor entry: `/festival`. The ordinary creator entry remains at `/`. Staff controls are at `/operator`, the projector screen at `/display`, and privacy information at `/privacy`.
 
+**Public hosting:** Vercel redirects to the persistent studio using `STUDIO_ORIGIN`. The temporary laptop setup needs this computer online. See [Vercel setup and restart instructions](deploy/VERCEL.md).
+
 ## Run locally
 
 Requirements: Node.js 20.9+; FFmpeg/FFprobe (5.1 or newer) with libx264, AAC, libass (`subtitles`), xfade, colortemperature and sidechaincompress. Typography uses the OFL fonts bundled in `public/fonts` (licences alongside). FFmpeg is configured with `FFMPEG_PATH` and `FFPROBE_PATH`. Optional: Ollama with a Qwen model for creative planning, and Python 3.11/3.12 for local transcription (below).
