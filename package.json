@@ -33,6 +33,8 @@
     "verify:feature-gate": "node scripts/verify-feature-gate.mjs",
     "verify:lan-phone": "node scripts/verify-lan-phone.mjs",
     "verify:concurrency": "node scripts/verify-concurrency.mjs",
+    "export:registrations": "tsx scripts/export-registrations.ts",
+    "verify:registration": "tsx --test tests/server/registrations.test.ts",
     "verify:deployment": "tsx --test tests/server/vercel.test.ts tests/server/local-only.test.ts"
   },
   "engines": {

@@ -8,6 +8,8 @@ Visitor entry: `/festival`. The ordinary creator entry remains at `/`. Staff con
 
 **Public hosting:** Vercel redirects to the persistent studio using `STUDIO_ORIGIN`. The temporary laptop setup needs this computer online. See [Vercel setup and restart instructions](deploy/VERCEL.md).
 
+**Creator registration:** name and email are required at the start of each session. Contact details are private and retained for 30 days by default. Export your private CSV using `deploy/export-registrations.ps1`; see [registration and export instructions](deploy/REGISTRATIONS.md).
+
 ## Run locally
 
 Requirements: Node.js 20.9+; FFmpeg/FFprobe (5.1 or newer) with libx264, AAC, libass (`subtitles`), xfade, colortemperature and sidechaincompress. Typography uses the OFL fonts bundled in `public/fonts` (licences alongside). FFmpeg is configured with `FFMPEG_PATH` and `FFPROBE_PATH`. Optional: Ollama with a Qwen model for creative planning, and Python 3.11/3.12 for local transcription (below).

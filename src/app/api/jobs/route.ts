@@ -1,3 +1,4 @@
+import { requireRegistration } from "@/lib/server/registrations";
 import { NextResponse } from "next/server";
 import { parseCreativeOptions, validateCreativeInput } from "@/lib/creative/options";
 import { createJob, getJob } from "@/lib/jobs/queue";
@@ -16,6 +17,7 @@ export async function POST(request: Request) {
     const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; challengeId?: string; sourceJobId?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
+    await requireRegistration(sessionId);
     const preset = getPreset(body.presetId || "");
     if (!preset) throw new Error("Choose a valid preset.");
     try { validateCreativeInput(body.creative); } catch (error) { throw new HttpError(400, (error as Error).message); }

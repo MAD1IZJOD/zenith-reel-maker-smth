@@ -62,7 +62,7 @@ export async function cleanupExpiredSessions(): Promise<void> {
       if (access ? access.expiresAt <= Date.now() : (await stat(folder)).mtimeMs < cutoff) await rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
   }
-  for (const collection of ["access", "retrieval", "premieres", "leaderboard"]) {
+  for (const collection of ["access", "retrieval", "premieres", "leaderboard", "registrations"]) {
     const directory = path.join(dataRoot(), collection);
     await mkdir(directory, { recursive: true });
     for (const entry of await readdir(directory)) {

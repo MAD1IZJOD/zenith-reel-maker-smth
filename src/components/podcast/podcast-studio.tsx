@@ -1,4 +1,5 @@
 "use client";
+import { RegistrationGate } from "@/components/registration-gate";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, Copy, Download, Film, Link2, LoaderCircle, RefreshCw, Sparkles, Upload, Wand2 } from "lucide-react";
@@ -212,7 +213,8 @@ export function PodcastStudio() {
   const alternatives = (index: number) => (discovery?.pool || []).filter((item) => !drafts.some((draft, position) => position !== index && draft.candidateId === item.id));
   const audioOnly = source?.media && !source.media.hasVideo;
 
-  return <main className="podcast-studio">
+  if (!sessionId) return <main><section className="page"><p role="status">{message || "Starting your session…"}</p><button className="secondary" onClick={() => location.reload()}>Retry connection</button></section></main>;
+  return <RegistrationGate key={sessionId} sessionId={sessionId}><main className="podcast-studio">
     <section className="page">
       <Link className="back" href="/"><ArrowLeft size={16} /> Zenith Reel</Link>
       <ol className="pod-steps" aria-label="Progress">{(["input", "review", "style", "gallery"] as const).map((step, index) => <li key={step} className={screen === step || (screen === "analysis" && step === "input") ? "current" : ""}>{["Source", "Highlights", "Style", "Reels"][index]}</li>)}</ol>
@@ -309,5 +311,5 @@ export function PodcastStudio() {
         <p className="privacy">Each reel is an excerpt of the original recording. Post captions say so. Your reels stay private until you share the files yourself.</p>
       </>}
     </section>
-  </main>;
+  </main></RegistrationGate>;
 }

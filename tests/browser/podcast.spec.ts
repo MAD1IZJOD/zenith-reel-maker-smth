@@ -1,3 +1,4 @@
+import { registerCreator } from "./register";
 import { expect, test } from "@playwright/test";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
@@ -6,7 +7,7 @@ const dialogue = path.resolve("data/fixtures/tos-dialogue.mp4");
 const lecture = path.resolve("data/fixtures/art_of_war_01-02_sun_tzu_64kb.mp3");
 
 test("landing offers both creation modes; podcast links are validated safely", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/"); await registerCreator(page);
   await expect(page.getByText("Your footage. Your story. Beautifully edited.")).toBeVisible();
   await page.getByRole("link", { name: /Podcast to reels/ }).click();
   await expect(page.getByRole("heading", { name: "Turn long videos into short reels." })).toBeVisible();
@@ -29,7 +30,7 @@ test("landing offers both creation modes; podcast links are validated safely", a
 test("one real recording becomes three captioned reels with previews, downloads, ZIP, a title edit and refresh recovery", async ({ page }) => {
   test.skip(!existsSync(lecture), "Run `npm run fixtures:fetch` for the public-domain spoken-word fixture.");
   test.setTimeout(480_000);
-  await page.goto("/podcast");
+  await page.goto("/podcast"); await registerCreator(page);
   await page.getByRole("radio", { name: "15–30 s" }).click();
   await page.getByRole("checkbox").check();
   const chooser = page.waitForEvent("filechooser");
@@ -88,7 +89,7 @@ test("a large video with only one strong moment says so and still makes that ree
   test.skip(!existsSync(dialogue), "Run `npm run fixtures:fetch` for the CC-BY dialogue fixture.");
   test.setTimeout(300_000);
   expect(statSync(dialogue).size).toBeGreaterThan(10 * 1048576);
-  await page.goto("/podcast");
+  await page.goto("/podcast"); await registerCreator(page);
   await page.getByRole("radio", { name: "15–30 s" }).click();
   await page.getByRole("checkbox").check();
   const chooser = page.waitForEvent("filechooser");

@@ -1,3 +1,4 @@
+import { requireRegistration } from "@/lib/server/registrations";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, rateLimit, requireSession } from "@/lib/server/security";
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
     const body = await request.json() as { sessionId?: string; sourceId?: unknown; preferences?: unknown; style?: unknown; reels?: unknown; brollIds?: unknown };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
+    await requireRegistration(sessionId);
     rateLimit(`batch:${sessionId}`, 6);
     const batch = await createBatch(sessionId, body);
     return NextResponse.json({ batch: await batchView(sessionId, batch.id) }, { status: 202 });

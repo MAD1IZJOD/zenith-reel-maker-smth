@@ -1,9 +1,10 @@
+import { registerCreator } from "./register";
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 
 test("festival is usable at phone, tablet and desktop widths", async ({ page }) => {
   for (const width of [360, 390, 768, 1440]) {
-    await page.setViewportSize({ width, height: 900 }); await page.goto("/festival");
+    await page.setViewportSize({ width, height: 900 }); await page.goto("/festival"); await registerCreator(page);
     await expect(page.getByRole("heading", { name: "3 Shots. 1 Epic Reel." })).toBeVisible();
     await expect(page.getByRole("button", { name: "Start Creating" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -13,7 +14,7 @@ test("festival is usable at phone, tablet and desktop widths", async ({ page }) 
 
 test("real upload, export, download, QR retrieval, consent and regeneration", async ({ page, browser }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/festival"); await page.getByRole("button", { name: "Reel Battle · Surprise Me" }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Reel Battle · Surprise Me" }).click();
   await expect(page.getByRole("heading", { name: "Here’s your three-shot plan." })).toBeVisible();
   await page.getByRole("button", { name: "Use this shot plan" }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -87,7 +88,7 @@ test("real upload, export, download, QR retrieval, consent and regeneration", as
 
 test("synthetic browser camera records and cleans up; this is not a physical-device test", async ({ page, context }) => {
   await context.grantPermissions(["camera"]);
-  await page.goto("/festival");
+  await page.goto("/festival"); await registerCreator(page);
   const nativeProbe = await page.evaluate(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     const chunks: Blob[] = []; const recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8" });
@@ -98,7 +99,7 @@ test("synthetic browser camera records and cleans up; this is not a physical-dev
   });
   expect(nativeProbe.bytes).toBeGreaterThan(1024);
   expect(nativeProbe.error).toBe("");
-  await page.goto("/festival"); await page.getByRole("button", { name: "Start Creating" }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Start Creating" }).click();
   await page.locator('.preset .card-action').first().click(); await page.getByRole("button", { name: "Use this shot plan" }).click();
   await page.getByRole("button", { name: "Open camera", exact: true }).click();
   const live = page.locator('.camera-box video');
@@ -120,7 +121,7 @@ test("synthetic browser camera records and cleans up; this is not a physical-dev
 });
 
 test("demo, operator sign-in boundary and empty public display", async ({ page }) => {
-  await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Your three moments are saved." })).toBeVisible({ timeout: 30_000 });
   // The stall's backup demo runs the real pipeline on sample footage and says so; it never claims a live recording.
   await page.getByRole("button", { name: /Customize reel/ }).click();
@@ -137,7 +138,7 @@ test("demo, operator sign-in boundary and empty public display", async ({ page }
 test("camera permission denial offers an upload path", async ({ page, context }) => {
   const cdp = await context.newCDPSession(page);
   await cdp.send("Browser.setPermission", { permission: { name: "camera" }, setting: "denied", origin: "http://localhost:3102" });
-  await page.goto("/festival"); await page.getByRole("button", { name: "Start Creating" }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Start Creating" }).click();
   await page.locator('.preset .card-action').first().click(); await page.getByRole("button", { name: "Use this shot plan" }).click();
   await page.getByRole("button", { name: "Open camera", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Camera permission was denied" })).toBeVisible();

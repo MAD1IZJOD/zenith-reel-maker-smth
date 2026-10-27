@@ -1,3 +1,4 @@
+import { requireRegistration } from "@/lib/server/registrations";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, rateLimit, requireSession } from "@/lib/server/security";
@@ -28,6 +29,7 @@ export async function POST(request: Request, context: Context) {
     const body = await request.json() as { sessionId?: string; changes?: unknown; style?: unknown };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
+    await requireRegistration(sessionId);
     rateLimit(`reel-edit:${sessionId}`, 20);
     const { id, index } = await context.params;
     await updateReel(sessionId, id, reelIndex(index), body.changes, body.style);

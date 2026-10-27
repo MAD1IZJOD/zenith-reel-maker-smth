@@ -21,7 +21,18 @@ async function waitReady() {
 
 const browser = await chromium.launch({ channel: existsSync("C:/Program Files/Google/Chrome/Application/chrome.exe") ? "chrome" : undefined });
 // The studio renders on the client, so pages are checked in a real browser at phone size.
-async function pageText(url) { const page = await browser.newPage({ viewport: { width: 390, height: 844 } }); await page.goto(url, { waitUntil: "networkidle" }); const html = await page.content(); await page.close(); return html; }
+async function pageText(url) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(url, { waitUntil: "networkidle" });
+  if (await page.getByLabel("Your name", { exact: true }).isVisible()) {
+    await page.getByLabel("Your name", { exact: true }).fill("Feature Test");
+    await page.getByLabel("Email address", { exact: true }).fill("feature-test@example.com");
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Continue to the studio" }).click();
+    await page.getByLabel("Your name", { exact: true }).waitFor({ state: "hidden" });
+  }
+  const html = await page.content(); await page.close(); return html;
+}
 let failures = 0;
 const check = (ok, label) => { console.log(`${ok ? "PASS" : "FAIL"}  ${label}`); if (!ok) failures++; };
 for (const scenario of scenarios) {

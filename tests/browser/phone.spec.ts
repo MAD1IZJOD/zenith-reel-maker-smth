@@ -1,3 +1,4 @@
+import { registerCreator } from "./register";
 import { test, expect, devices } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -23,7 +24,7 @@ for (const { name, device } of profiles) {
       test.setTimeout(240_000);
       const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
       await context.grantPermissions(["camera"]);
-      await page.goto("/festival");
+      await page.goto("/festival"); await registerCreator(page);
       await page.getByRole("button", { name: "Start Creating" }).tap();
       await page.locator(".preset .card-action").first().tap();
       await page.getByRole("button", { name: "Use this shot plan" }).tap();
@@ -99,7 +100,7 @@ test("several visitors uploading at the same moment all succeed without seeing a
   const visitors = await Promise.all(Array.from({ length: 4 }, async () => {
     const context = await browser.newContext({ viewport: devices["Pixel 7"].viewport, isMobile: true, hasTouch: true });
     const page = await context.newPage();
-    await page.goto("/festival");
+    await page.goto("/festival"); await registerCreator(page);
     await page.getByRole("button", { name: "Start Creating" }).tap();
     await page.locator(".preset .card-action").first().tap();
     await page.getByRole("button", { name: "Use this shot plan" }).tap();

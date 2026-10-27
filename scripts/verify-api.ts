@@ -22,7 +22,7 @@ async function fetch(input: string, init: RequestInit = {}): Promise<Response> {
   for (const entry of response.headers.getSetCookie()) { const [pair] = entry.split(";"); const split = pair.indexOf("="); cookies.set(pair.slice(0, split), pair.slice(split + 1)); }
   return response;
 }
-async function newSession(): Promise<string> { const response = await fetch(`${baseUrl}/api/sessions`, { method: "POST" }); if (!response.ok) throw new Error("Session creation failed"); return (await response.json()).sessionId; }
+async function newSession(): Promise<string> { const response = await fetch(`${baseUrl}/api/sessions`, { method: "POST" }); if (!response.ok) throw new Error("Session creation failed"); const { sessionId } = await response.json(); const registered = await fetch(`${baseUrl}/api/sessions/${sessionId}/registration`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "API Test", email: "api-test@example.com", acknowledged: true }) }); if (!registered.ok) throw new Error("Registration failed"); return sessionId; }
 function startServer(): ChildProcess {
   const child = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port)], {
     cwd: process.cwd(),

@@ -33,6 +33,8 @@ async function ready() { for (let i = 0; i < 120; i++) { try { if ((await fetch(
 async function visitor(index) {
   const session = await fetch(`${base}/api/sessions`, { method: "POST", headers: { Origin: base } });
   const { sessionId } = await session.json(); const cookie = (session.headers.get("set-cookie") || "").split(";")[0];
+  const registered = await fetch(`${base}/api/sessions/${sessionId}/registration`, { method: "PUT", headers: { cookie, Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ name: `Load Test ${index}`, email: "load-test@example.com", acknowledged: true }) });
+  if (!registered.ok) throw new Error(`registration ${registered.status}`);
   const result = { index, refused: 0, uploadMs: 0, queueMs: 0, renderMs: 0, totalMs: 0, ok: false, error: "" };
   const started = Date.now();
   await Promise.all(clips.map(async (bytes, shot) => {

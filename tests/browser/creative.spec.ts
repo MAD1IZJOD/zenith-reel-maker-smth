@@ -1,3 +1,4 @@
+import { registerCreator } from "./register";
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 
@@ -5,7 +6,7 @@ test("cinematic landing and accessible storyboard reflect real footage", async (
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: "reduce" });
   for (const width of [360, 390, 768, 1440]) {
-    await page.setViewportSize({ width, height: 900 }); await page.goto("/");
+    await page.setViewportSize({ width, height: 900 }); await page.goto("/"); await registerCreator(page);
     await expect(page).toHaveTitle("ZENITH AGENTIC REEL MAKER");
     await expect(page.getByRole("heading", { name: "Three shots. Infinite stories." })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -35,7 +36,7 @@ test("cinematic landing and accessible storyboard reflect real footage", async (
 test("spatial motion and recording navigation stay usable without WebGL", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto("/");
+  await page.goto("/"); await registerCreator(page);
   await page.getByRole("button", { name: "Explore sample shot 1" }).click();
   await expect(page.getByRole("button", { name: "Explore sample shot 1" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".hero-installation")).toHaveCSS("opacity", "1");
@@ -56,7 +57,7 @@ test("spatial motion and recording navigation stay usable without WebGL", async 
 });
 
 test("Remix Lab renders, compares and downloads two edits from one source", async ({ page }) => {
-  await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await page.getByRole("button", { name: "Customize reel" }).click({ timeout: 30_000 });
   await page.getByRole("button", { name: "Generate MP4" }).click();
   await expect(page.getByRole("heading", { name: "Made from your moments." })).toBeVisible({ timeout: 80_000 });
@@ -82,7 +83,7 @@ test("Remix Lab renders, compares and downloads two edits from one source", asyn
 });
 
 test("Beat Lab exports its selected timing and original soundtrack", async ({ page }) => {
-  await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await page.getByRole("button", { name: "Customize reel" }).click({ timeout: 30_000 });
   await page.getByRole("tab", { name: "Beat Lab", exact: true }).click();
   await page.getByLabel("Audio source").selectOption("soundtrack");
@@ -99,7 +100,7 @@ test("Beat Lab exports its selected timing and original soundtrack", async ({ pa
 });
 
 test("Finishing Studio submits Director plan, look, profile, title, captions, order, trim and cover controls to a real export", async ({ page }) => {
-  await page.goto("/festival"); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
+  await page.goto("/festival"); await registerCreator(page); await page.getByRole("button", { name: "Try Demo", exact: true }).click();
   await page.getByRole("button", { name: "Customize reel" }).click({ timeout: 30_000 });
   await page.getByRole("tab", { name: "Style", exact: true }).click();
   await page.getByRole("button", { name: "Ask the Director" }).click();

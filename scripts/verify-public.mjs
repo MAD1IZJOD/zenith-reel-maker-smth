@@ -31,6 +31,7 @@ assert.equal(sessionResponse.status, 200);
 assert.match(sessionResponse.headers.get("set-cookie"), /secure/i);
 cookie = sessionResponse.headers.get("set-cookie").split(";")[0];
 const { sessionId } = await sessionResponse.json();
+await json(`/api/sessions/${sessionId}/registration`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Public Verification", email: "verification@example.com", acknowledged: true }) });
 for (const shot of [1, 2, 3]) {
   const bytes = await readFile(`public/samples/shot-${shot}.mp4`);
   const form = new FormData();
