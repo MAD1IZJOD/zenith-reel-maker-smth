@@ -6,6 +6,7 @@ import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import zlib from "node:zlib";
 import { issueSession, sessionCookie } from "@/lib/server/security";
+import { saveRegistration } from "@/lib/server/registrations";
 import { createSessionId, ensureSession } from "@/lib/storage/session-storage";
 import { createSource, finishIngest, sourceDirectory, sourceMediaPath } from "@/lib/sources/store";
 import { saveImportedTranscript } from "@/lib/transcription/service";
@@ -70,6 +71,7 @@ function verifyZip(buffer: Buffer): { name: string; size: number; crc: number; d
 
 test("one source becomes three independent, downloadable reels with per-reel edits, partial failure and retry", { timeout: 600_000 }, async () => {
   const sessionId = createSessionId(); const { token } = await issueSession(sessionId); const directory = await ensureSession(sessionId);
+  await saveRegistration(sessionId, { name: "Pipeline Test", email: "pipeline@example.com", acknowledged: true });
   const cookie = `${sessionCookie(sessionId)}=${token}`;
   const raw = path.join(directory, "fixture-source.mp4");
   await runProcess(ffmpeg(), ["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=95", "-f", "lavfi", "-i", "sine=frequency=220:d=95", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", raw], "Podcast fixture");
