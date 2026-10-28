@@ -1,6 +1,6 @@
 import path from "node:path";
 import { copyFile, rm } from "node:fs/promises";
-import { readJson, writeJson } from "@/lib/server/store";
+import { exclusive, readJson, writeJson } from "@/lib/server/store";
 import { HttpError } from "@/lib/server/security";
 import { listSources, readSource, saveSource, sourceDirectory, sourceMediaPath, track, type SourceRecord } from "@/lib/sources/store";
 import { extractSpeechAudio, transcribeWithWhisper, transcriptionAvailability, whisperConfig } from "./faster-whisper";
@@ -28,6 +28,10 @@ export const transcriptionQueueLength = () => waiting;
  * source never re-transcribe. Runs in the background; the source record reports progress and honest failures.
  */
 export async function startTranscription(sessionId: string, id: string, language?: string): Promise<SourceRecord> {
+  return exclusive("transcription-admission", () => admitTranscription(sessionId, id, language));
+}
+
+async function admitTranscription(sessionId: string, id: string, language?: string): Promise<SourceRecord> {
   const record = await readSource(sessionId, id);
   if (record.status !== "ready" || !record.media) throw new HttpError(409, "The source is not ready yet.");
   if (!record.media.hasAudio) throw new HttpError(400, "This source has no audio track to transcribe.");
@@ -69,7 +73,7 @@ export async function startTranscription(sessionId: string, id: string, language
     });
     chain = run;
     return run;
-  });
+  }).catch(() => { console.error("Could not persist a transcription result."); });
   return queued;
 }
 

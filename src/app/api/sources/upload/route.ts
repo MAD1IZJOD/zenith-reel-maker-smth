@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from "@/lib/server/security";
 import { crossOriginReason } from "@/lib/server/origin";
-import { createSource, finishIngest, ingestsInFlight, sourceDirectory, sourceLimits, track } from "@/lib/sources/store";
+import { createSource, finishIngest, reserveIngest, sourceDirectory, sourceLimits, track } from "@/lib/sources/store";
 import { countSafely } from "@/lib/festival/metrics";
 import { requirePodcastMode } from "@/lib/server/features";
 
@@ -20,6 +20,7 @@ const MEDIA_TYPE = /^(video|audio)\/[a-z0-9.+-]+$/i;
  */
 export async function PUT(request: Request) {
   let target: string | undefined;
+  let release: (() => void) | undefined;
   try {
     await requirePodcastMode();
     const blocked = crossOriginReason(request.method, request.headers, new URL(request.url).origin);
@@ -35,7 +36,7 @@ export async function PUT(request: Request) {
     const declared = Number(request.headers.get("content-length"));
     if (Number.isFinite(declared) && declared > maxBytes) throw new HttpError(413, `Sources can be up to ${Math.round(maxBytes / 1048576)} MB.`);
     if (!request.body) throw new HttpError(400, "No file was received.");
-    if (ingestsInFlight() >= 2) throw new HttpError(429, "Other imports are running. Please try again in a minute.");
+    release = reserveIngest();
     const record = await createSource(sessionId, "upload", params.get("name") || "Uploaded media", Number.isFinite(declared) ? declared : 0);
     target = path.join(sourceDirectory(sessionId, record.id), "upload.part");
     const result = await track(record.id, async () => {
@@ -56,5 +57,5 @@ export async function PUT(request: Request) {
   } catch (error) {
     if (target) await rm(target, { force: true });
     return errorResponse(error, "The upload did not complete. Please try again.");
-  }
+  } finally { release?.(); }
 }

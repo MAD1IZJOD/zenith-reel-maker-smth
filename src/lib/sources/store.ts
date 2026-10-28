@@ -27,7 +27,14 @@ export function sourceDirectory(sessionId: string, id: string): string {
 export const sourceMediaPath = (sessionId: string, id: string) => path.join(sourceDirectory(sessionId, id), "original.media");
 
 const active = (globalThis as typeof globalThis & { zenithIngests?: Set<string> }).zenithIngests ||= new Set<string>();
-export const ingestsInFlight = () => active.size;
+const capacity = (globalThis as typeof globalThis & { zenithIngestCapacity?: { used: number } }).zenithIngestCapacity ||= { used: 0 };
+/** Reserve synchronously, before filesystem or network awaits can admit another request. */
+export function reserveIngest(): () => void {
+  if (capacity.used >= 2) throw new HttpError(429, "Other imports are running. Please try again in a minute.");
+  capacity.used++;
+  let released = false;
+  return () => { if (!released) { released = true; capacity.used--; } };
+}
 
 export async function readSource(sessionId: string, id: string): Promise<SourceRecord> {
   const record = await readJson<SourceRecord>(path.join(sourceDirectory(sessionId, id), "record.json"));

@@ -3,8 +3,8 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from "@/lib/server/security";
-import { createSource, finishIngest, ingestsInFlight, listSources, saveSource, sourceDirectory, sourceLimits, track } from "@/lib/sources/store";
-import { assertPublicHost, parseMediaUrl, UnsafeUrlError } from "@/lib/sources/url-safety";
+import { createSource, finishIngest, reserveIngest, listSources, saveSource, sourceDirectory, sourceLimits, track } from "@/lib/sources/store";
+import { parseMediaUrl, UnsafeUrlError } from "@/lib/sources/url-safety";
 import { downloadMedia } from "@/lib/sources/download";
 import { countSafely } from "@/lib/festival/metrics";
 import { requirePodcastMode } from "@/lib/server/features";
@@ -22,6 +22,7 @@ export async function GET(request: Request) {
 
 /** Imports from a direct, public media link. The download runs in the background; poll the source for status. */
 export async function POST(request: Request) {
+  let release: (() => void) | undefined;
   try {
     await requirePodcastMode();
     const body = await readJsonBody(request) as { sessionId?: string; url?: string; rightsConfirmed?: boolean };
@@ -30,10 +31,12 @@ export async function POST(request: Request) {
     rateLimit(`source-url:${networkKey(request)}`, 6);
     if (body.rightsConfirmed !== true) throw new HttpError(400, "Confirm that you own this media or have permission to make clips from it.");
     let url: URL;
-    try { url = parseMediaUrl(String(body.url || "")); await assertPublicHost(url); } catch (error) { throw new HttpError(400, error instanceof UnsafeUrlError ? error.message : "This link cannot be used."); }
-    if (ingestsInFlight() >= 2) throw new HttpError(429, "Other imports are running. Please try again in a minute.");
+    try { url = parseMediaUrl(String(body.url || "")); } catch (error) { throw new HttpError(400, error instanceof UnsafeUrlError ? error.message : "This link cannot be used."); }
+    // DNS is validated inside the bounded download, including its deadline.
+    release = reserveIngest();
     const record = await createSource(sessionId, "url", `${url.hostname}${path.posix.basename(url.pathname) ? ` · ${decodeURIComponent(path.posix.basename(url.pathname)).slice(0, 60)}` : ""}`);
     const target = path.join(sourceDirectory(sessionId, record.id), "download.part");
+    const releaseBackground = release;
     void track(record.id, async () => {
       try {
         const { maxBytes } = sourceLimits();
@@ -42,8 +45,10 @@ export async function POST(request: Request) {
         if (result.status === "ready") countSafely("source_imported");
       } catch (error) {
         await saveSource({ ...record, status: "failed", error: error instanceof UnsafeUrlError ? error.message : "The media could not be downloaded." });
-      }
-    });
+      } finally { releaseBackground(); }
+    }).catch(() => { console.error("Could not persist an import result."); });
+    release = undefined; // Background work now owns the reservation.
     return NextResponse.json({ source: record }, { status: 202 });
   } catch (error) { return errorResponse(error, "Could not start this import."); }
+  finally { release?.(); }
 }

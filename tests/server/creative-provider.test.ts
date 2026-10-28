@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { z } from "zod";
 import { LocalModelProvider, extractJson, providerConfig } from "@/lib/ai/provider";
 import { planCreative, rulesPlan, observe } from "@/lib/ai/creative-planner";
 import { getPreset } from "@/lib/presets";
@@ -93,4 +94,18 @@ test("rules plan is deterministic and observations describe measured facts only"
   assert.equal(observations[1].motion, "unknown");
   assert.deepEqual(rulesPlan(preset, "energetic", observations), rulesPlan(preset, "energetic", observations));
   assert.throws(() => extractJson("no json here"));
+});
+
+test("a burst cannot build an unbounded model queue", async () => {
+  const runtime = await mockRuntime("valid");
+  try {
+    const client = provider(runtime.url);
+    await client.health();
+    const results = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => client.structured({ name: `burst-${index}`, schema: z.object({ hook: z.string() }), jsonSchema: { type: "object" }, messages: [{ role: "user", content: String(index) }] })));
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 4);
+    for (const result of results.filter((item) => item.status === "rejected")) assert.match(result.reason.message, /queue is full/);
+    assert.equal(runtime.stats().calls, 4);
+    assert.equal(runtime.stats().peak, 1);
+    await client.structured({ name: "after-burst", schema: z.object({ hook: z.string() }), jsonSchema: {}, messages: [{ role: "user", content: "after" }] });
+  } finally { await runtime.close(); }
 });

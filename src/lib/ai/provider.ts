@@ -49,7 +49,13 @@ async function request(url: string, init: RequestInit, timeoutMs: number): Promi
 // One generation at a time: a second concurrent 8B inference would only thrash memory on this class of laptop.
 let queue: Promise<unknown> = Promise.resolve();
 let waiting = 0;
-function singleFlight<T>(task: () => Promise<T>): Promise<T> { waiting++; const next = queue.catch(() => undefined).then(task).finally(() => { waiting--; }); queue = next; return next; }
+function singleFlight<T>(task: () => Promise<T>): Promise<T> {
+  if (waiting >= 4) return Promise.reject(new ProviderError("unavailable", "The local model queue is full. Please try again shortly."));
+  waiting++;
+  const next = queue.catch(() => undefined).then(task).finally(() => { waiting--; });
+  queue = next;
+  return next;
+}
 const cache = new Map<string, unknown>();
 const remember = (key: string, value: unknown) => { cache.set(key, value); if (cache.size > 64) cache.delete(cache.keys().next().value as string); };
 
