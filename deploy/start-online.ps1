@@ -9,7 +9,9 @@
 param(
   [int] $Port = 3200,
   [string] $DataDir = "",
-  [string] $PublicUrl = ""
+  [string] $PublicUrl = "",
+  [ValidateSet("http2", "quic", "auto")]
+  [string] $TunnelProtocol = "http2"
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -28,7 +30,8 @@ try {
   if (-not $PublicUrl) {
     $cloudflared = Get-Command cloudflared -ErrorAction Stop
     $log = Join-Path $logDir ("tunnel-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
-    $tunnel = Start-Process -FilePath $cloudflared.Source -ArgumentList @("tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:$Port", "--logfile", ('"' + $log + '"')) -PassThru -WindowStyle Hidden
+    # Prefer TCP after repeated QUIC/UDP timeouts on the laptop's connection.
+    $tunnel = Start-Process -FilePath $cloudflared.Source -ArgumentList @("tunnel", "--no-autoupdate", "--protocol", $TunnelProtocol, "--url", "http://127.0.0.1:$Port", "--logfile", ('"' + $log + '"')) -PassThru -WindowStyle Hidden
     for ($i = 0; $i -lt 60 -and -not $PublicUrl; $i++) {
       if ($tunnel.HasExited) { throw "Tunnel exited. See $log" }
       Start-Sleep -Seconds 1
