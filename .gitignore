@@ -4,9 +4,8 @@ node_modules/
 .next-api-test/
 data/
 public/samples/*.jpg
-.env.local
-.env
-.env.production
+.env*
+!.env.example
 .next-browser-test/
 playwright-report/
 test-results/

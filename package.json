@@ -35,7 +35,8 @@
     "verify:concurrency": "node scripts/verify-concurrency.mjs",
     "export:registrations": "tsx scripts/export-registrations.ts",
     "verify:registration": "tsx --test tests/server/registrations.test.ts",
-    "verify:deployment": "tsx --test tests/server/vercel.test.ts tests/server/local-only.test.ts"
+    "verify:deployment": "tsx --test tests/server/vercel.test.ts tests/server/local-only.test.ts",
+    "verify:security": "tsx --test tests/server/request-body.test.ts tests/server/health.test.ts tests/server/media-safety.test.ts tests/server/download-security.test.ts tests/server/ingest-capacity.test.ts tests/server/registrations.test.ts tests/server/local-only.test.ts tests/server/sources.test.ts tests/server/creative-provider.test.ts tests/server/upload-validation.test.ts tests/server/vercel.test.ts"
   },
   "engines": {
     "node": ">=20.9"
