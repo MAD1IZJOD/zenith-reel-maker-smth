@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { requireRegistration } from "@/lib/server/registrations";
 import { NextResponse } from "next/server";
 import { parseCreativeOptions, validateCreativeInput } from "@/lib/creative/options";
@@ -14,7 +15,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; challengeId?: string; sourceJobId?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
+    const body = await readJsonBody(request) as { sessionId?: string; presetId?: string; title?: string; creative?: unknown; challengeId?: string; sourceJobId?: string; consent?: { publicDisplay?: boolean; promoReuse?: boolean } };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     await requireRegistration(sessionId);

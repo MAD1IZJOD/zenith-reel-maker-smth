@@ -1,5 +1,6 @@
 import { getRegistration, registrationDays, saveRegistration } from "@/lib/server/registrations";
-import { errorResponse, HttpError, rateLimit, requireSession } from "@/lib/server/security";
+import { errorResponse, rateLimit, requireSession } from "@/lib/server/security";
+import { readJsonBody } from "@/lib/server/request-body";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ sessionId: string }> };
@@ -16,9 +17,7 @@ export async function PUT(request: Request, context: Context) {
     const { sessionId } = await context.params;
     await requireSession(request, sessionId);
     rateLimit(`registration:${sessionId}`, 20);
-    const body = await request.text();
-    if (body.length > 4096) throw new HttpError(413, "Registration is too large.");
-    await saveRegistration(sessionId, JSON.parse(body));
+    await saveRegistration(sessionId, await readJsonBody(request, 4096));
     return Response.json({ registered: true }, { headers });
   } catch (error) { return errorResponse(error, "Could not save your details. Please retry."); }
 }

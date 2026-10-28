@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { statfs } from "node:fs/promises";
 import { getJob, listJobs, pauseSubmissions, queueStats } from "@/lib/jobs/queue";
 import { displaySettings, updatePremiere, type Premiere } from "@/lib/festival/premiere";
@@ -24,8 +25,8 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    requireOperator(request); const body = await request.json();
-    if (body.action === "review" && ["approved", "rejected"].includes(body.status)) await updatePremiere(String(body.id), body.status);
+    requireOperator(request); const body = await readJsonBody(request);
+    if (body.action === "review" && (body.status === "approved" || body.status === "rejected")) await updatePremiere(String(body.id), body.status);
     else if (body.action === "display" && typeof body.paused === "boolean" && typeof body.demoOnly === "boolean") await writeJson(recordPath("settings", "display"), { paused: body.paused, demoOnly: body.demoOnly });
     else if (body.action === "admission" && typeof body.paused === "boolean") pauseSubmissions(body.paused);
     else if (body.action === "cleanup") await cleanupExpiredSessions();

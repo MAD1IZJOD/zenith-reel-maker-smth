@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { NextResponse } from "next/server";
 import { getJob } from "@/lib/jobs/queue";
 import { challengeResult } from "@/lib/creative/challenges";
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    const { jobId, nickname, optIn } = await request.json();
+    const { jobId, nickname, optIn } = await readJsonBody(request);
     const job = await getJob(String(jobId)); if (!job) throw new HttpError(404, "Reel not found.");
     await requireSession(request, job.sessionId); rateLimit(`score:${job.sessionId}`, 6);
     if (optIn !== true) throw new HttpError(400, "Leaderboard participation is optional and needs your confirmation.");

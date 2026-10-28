@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { NextResponse } from "next/server";
 import { parseCreativeOptions, type CreativeOptions } from "@/lib/creative/options";
 import { PRESETS } from "@/lib/presets";
@@ -93,7 +94,7 @@ export async function PUT(request: Request, context: { params: Promise<{ session
   try {
     const sessionId = assertSessionId((await context.params).sessionId);
     await requireSession(request, sessionId);
-    const draft = parseDraft(await request.json(), sessionId);
+    const draft = parseDraft(await readJsonBody(request), sessionId);
     await writeSessionDraft(sessionId, draft);
     return NextResponse.json({ saved: true });
   } catch (error) { return errorResponse(error, "Could not save session."); }

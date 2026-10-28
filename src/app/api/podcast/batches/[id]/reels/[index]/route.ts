@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { requireRegistration } from "@/lib/server/registrations";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
@@ -26,7 +27,7 @@ export async function GET(request: Request, context: Context) {
 export async function POST(request: Request, context: Context) {
   try {
     await requirePodcastMode();
-    const body = await request.json() as { sessionId?: string; changes?: unknown; style?: unknown };
+    const body = await readJsonBody(request) as { sessionId?: string; changes?: unknown; style?: unknown };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     await requireRegistration(sessionId);

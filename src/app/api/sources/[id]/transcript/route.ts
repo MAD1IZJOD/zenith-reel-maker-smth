@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
 import { errorResponse, HttpError, rateLimit, requireSession } from "@/lib/server/security";
@@ -21,7 +22,7 @@ export async function GET(request: Request, context: Context) {
 export async function POST(request: Request, context: Context) {
   try {
     await requirePodcastMode();
-    const body = await request.json() as { sessionId?: string; action?: string; language?: string; text?: string };
+    const body = await readJsonBody(request, 4 * 1024 * 1024) as { sessionId?: string; action?: string; language?: string; text?: string };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     rateLimit(`transcript:${sessionId}`, 10);

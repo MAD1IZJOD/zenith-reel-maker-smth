@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getPreset } from "@/lib/presets";
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
 /** Creative plan for the saved shots: local Qwen when it answers in time and validates, transparent rules otherwise. */
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { sessionId?: string; presetId?: string; vibe?: string; challenge?: string };
+    const body = await readJsonBody(request) as { sessionId?: string; presetId?: string; vibe?: string; challenge?: string };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     rateLimit(`plan:${sessionId}`, 8);

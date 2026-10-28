@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { assertSessionId } from "@/lib/storage/session-storage";
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await requirePodcastMode();
-    const body = await request.json() as { sessionId?: string; url?: string; rightsConfirmed?: boolean };
+    const body = await readJsonBody(request) as { sessionId?: string; url?: string; rightsConfirmed?: boolean };
     const sessionId = assertSessionId(body.sessionId || "");
     await requireSession(request, sessionId);
     rateLimit(`source-url:${networkKey(request)}`, 6);

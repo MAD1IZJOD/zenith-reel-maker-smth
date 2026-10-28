@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/server/request-body";
 import { NextResponse } from "next/server";
 import { getJob } from "@/lib/jobs/queue";
 import { getPremiere, submitPremiere, updatePremiere, type Premiere } from "@/lib/festival/premiere";
@@ -14,7 +15,7 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    const body = await request.json(); const job = await getJob(String(body.jobId)); if (!job) throw new HttpError(404, "Reel not found.");
+    const body = await readJsonBody(request); const job = await getJob(String(body.jobId)); if (!job) throw new HttpError(404, "Reel not found.");
     await requireSession(request, job.sessionId); rateLimit(`premiere:${job.sessionId}`, 6);
     const entry = await submitPremiere(job.id, body.consentBasis, body.allPeopleAgree, body.promoReuse);
     return NextResponse.json({ entry: { id: entry.id, status: entry.status } });
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
 }
 export async function DELETE(request: Request) {
   try {
-    const { id } = await request.json(); const entry = await getPremiere(String(id)); await requireSession(request, entry.sessionId);
+    const { id } = await readJsonBody(request); const entry = await getPremiere(String(id)); await requireSession(request, entry.sessionId);
     await updatePremiere(entry.id, "revoked"); return NextResponse.json({ revoked: true });
   } catch (error) { return errorResponse(error); }
 }
