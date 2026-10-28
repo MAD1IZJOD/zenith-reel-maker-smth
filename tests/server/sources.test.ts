@@ -32,6 +32,14 @@ test("hosts resolving to any private address are rejected (DNS rebinding first l
   await assert.doesNotReject(assertPublicHost(new URL("https://media.example.com/a.mp4"), (async () => [{ address: "93.184.216.34", family: 4 }]) as never));
 });
 
+test("IPv6 transition addresses cannot hide a private destination in alternate spellings", async () => {
+  for (const address of ["::7f00:1", "64:ff9b:0:0:0:0:7f00:1", "64:ff9b:1::7f00:1", "2001::7f00:1"]) {
+    assert.equal(isPrivateAddress(address), true, address);
+    assert.throws(() => parseMediaUrl(`http://[${address}]/media.mp4`), UnsafeUrlError);
+    await assert.rejects(assertPublicHost(new URL("https://media.example.org/a.mp4"), (async () => [{ address, family: 6 }]) as never), /private/);
+  }
+});
+
 async function fixtureServer() {
   const server = http.createServer((request, response) => {
     if (request.url === "/clip.mp4") { response.writeHead(200, { "Content-Type": "video/mp4" }); return response.end(Buffer.alloc(4096, 1)); }
