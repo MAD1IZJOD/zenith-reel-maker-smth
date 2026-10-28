@@ -8,6 +8,7 @@ import { readJson, writeJson, exclusive } from "@/lib/server/store";
 import { limit } from "@/lib/server/config";
 import { HttpError } from "@/lib/server/security";
 import { ffmpeg, ffprobe, runProcess } from "@/lib/video/process";
+import { MEDIA_INPUT_OPTIONS } from "@/lib/video/input-policy";
 
 export type SourceMedia = { duration: number; hasVideo: boolean; hasAudio: boolean; width?: number; height?: number; formatName: string; sizeBytes: number; contentHash?: string };
 export type TranscriptState = { status: "none" | "queued" | "running" | "ready" | "failed"; engine?: "faster-whisper" | "import"; model?: string; language?: string; words?: number; segments?: number; wordTimestamps?: boolean; processingMs?: number; processedSeconds?: number; reusedFrom?: "same-content"; error?: string; updatedAt?: number };
@@ -74,7 +75,7 @@ export async function track<T>(key: string, task: () => Promise<T>): Promise<T> 
 
 /** Probes audio or video media; podcasts may be audio-only. */
 export async function probeMedia(file: string): Promise<SourceMedia> {
-  const output = JSON.parse(await runProcess(ffprobe(), ["-v", "error", "-show_entries", "format=format_name,duration:stream=codec_type,width,height:stream_side_data=rotation", "-of", "json", file], "Source probe", 60_000)) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; width?: number; height?: number; side_data_list?: { rotation?: number }[] }[] };
+  const output = JSON.parse(await runProcess(ffprobe(), ["-v", "error", ...MEDIA_INPUT_OPTIONS, "-show_entries", "format=format_name,duration:stream=codec_type,width,height:stream_side_data=rotation", "-of", "json", file], "Source probe", 60_000)) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; width?: number; height?: number; side_data_list?: { rotation?: number }[] }[] };
   const video = output.streams?.find((entry) => entry.codec_type === "video" && entry.width && entry.height);
   const hasAudio = Boolean(output.streams?.some((entry) => entry.codec_type === "audio"));
   const duration = Number(output.format?.duration);
@@ -89,7 +90,7 @@ export async function probeMedia(file: string): Promise<SourceMedia> {
 /** Decodes short windows at the start, middle and end: corrupt or disguised files fail here, before any use. */
 export async function validateDecode(file: string, duration: number): Promise<void> {
   for (const at of [0, Math.max(0, duration / 2 - 1), Math.max(0, duration - 2.5)]) {
-    await runProcess(ffmpeg(), ["-v", "error", "-xerror", "-ss", at.toFixed(2), "-t", "2", "-i", file, "-f", "null", "-"], "Source decode check", 60_000)
+    await runProcess(ffmpeg(), ["-v", "error", "-xerror", "-ss", at.toFixed(2), "-t", "2", ...MEDIA_INPUT_OPTIONS, "-i", file, "-f", "null", "-"], "Source decode check", 60_000)
       .catch(() => { throw new HttpError(400, "This media could not be decoded. Try exporting it again as MP4, MOV, WebM, MP3, M4A or WAV."); });
   }
 }

@@ -1,6 +1,7 @@
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ffmpeg, runProcess } from "@/lib/video/process";
+import { MEDIA_INPUT_OPTIONS } from "@/lib/video/input-policy";
 import { transcriptSchema, type Transcript } from "./schema";
 
 /**
@@ -31,7 +32,7 @@ export function transcriptionAvailability(): Promise<{ available: boolean; reaso
 
 /** 16 kHz mono PCM is what Whisper consumes; extracting once also strips video for a faster, smaller worker input. */
 export async function extractSpeechAudio(source: string, output: string, seconds: number): Promise<void> {
-  await runProcess(ffmpeg(), ["-y", "-v", "error", "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", output], "Speech audio extraction", 60_000 + seconds * 1000);
+  await runProcess(ffmpeg(), ["-y", "-v", "error", ...MEDIA_INPUT_OPTIONS, "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", output], "Speech audio extraction", 60_000 + seconds * 1000);
 }
 
 export async function transcribeWithWhisper(audio: string, output: string, seconds: number, language?: string, progressFile?: string): Promise<Transcript> {

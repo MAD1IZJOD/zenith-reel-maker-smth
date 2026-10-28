@@ -1,10 +1,11 @@
 import { ffprobe, runProcess } from "./process";
 import { limit } from "@/lib/server/config";
+import { MEDIA_INPUT_OPTIONS } from "./input-policy";
 
 export type VideoMetadata = { duration: number; formatName: string; width: number; height: number; codecName: string; hasAudio: boolean; rotation?: number };
 
 export async function probeVideo(file: string, allowUnknownDuration = false): Promise<VideoMetadata> {
-  const output = await runProcess(ffprobe(), ["-v", "error", "-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height:stream_side_data=rotation", "-of", "json", file], "FFprobe");
+  const output = await runProcess(ffprobe(), ["-v", "error", ...MEDIA_INPUT_OPTIONS, "-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height:stream_side_data=rotation", "-of", "json", file], "FFprobe");
   const json = JSON.parse(output) as { format?: { duration?: string; format_name?: string }; streams?: { codec_type: string; codec_name?: string; width?: number; height?: number; side_data_list?: { rotation?: number }[] }[] };
   const stream = json.streams?.find((entry) => entry.codec_type === "video");
   const duration = Number(json.format?.duration);

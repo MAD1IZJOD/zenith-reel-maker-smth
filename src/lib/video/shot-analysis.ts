@@ -2,6 +2,7 @@ import type { VideoMetadata } from "./metadata";
 import type { ShotActivity, ShotAnalysis, ShotIssue } from "./shot-analysis-types";
 import { readFile, rm } from "node:fs/promises";
 import { ffmpeg, runProcess } from "./process";
+import { MEDIA_INPUT_OPTIONS } from "./input-policy";
 import { filterPath } from "./compile";
 
 export const ACTIVITY_STEP = 0.2;
@@ -34,7 +35,7 @@ export async function analyzeShot(file: string, metadata: VideoMetadata): Promis
   const graph = [`[0:v]fps=${1 / ACTIVITY_STEP},scale=96:-2,signalstats,metadata=mode=print:file='${filterPath(videoLog)}'[v]`];
   if (metadata.hasAudio) graph.push(`[0:a]aresample=48000,asetnsamples=n=${48000 * ACTIVITY_STEP}:p=0,astats=metadata=1:reset=1:measure_overall=RMS_level:measure_perchannel=none,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file='${filterPath(audioLog)}'[a]`);
   try {
-    await runProcess(ffmpeg(), ["-v", "error", "-threads", "1", "-i", file, "-filter_complex", graph.join(";"), "-filter_complex_threads", "1", "-map", "[v]", "-f", "null", "-", ...(metadata.hasAudio ? ["-map", "[a]", "-f", "null", "-"] : [])], "Shot analysis", 60_000);
+    await runProcess(ffmpeg(), ["-v", "error", "-threads", "1", ...MEDIA_INPUT_OPTIONS, "-i", file, "-filter_complex", graph.join(";"), "-filter_complex_threads", "1", "-map", "[v]", "-f", "null", "-", ...(metadata.hasAudio ? ["-map", "[a]", "-f", "null", "-"] : [])], "Shot analysis", 60_000);
     const video = await readFile(videoLog, "utf8");
     const luma = values(video, "lavfi.signalstats.YAVG");
     const middle = Math.round(metadata.duration / 2 / ACTIVITY_STEP);

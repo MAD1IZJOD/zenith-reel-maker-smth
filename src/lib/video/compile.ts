@@ -1,4 +1,5 @@
 import path from "node:path";
+import { MEDIA_INPUT_OPTIONS } from "./input-policy";
 import { edlDuration, type EditDecisionList, type EdlSegment } from "@/lib/edit/edl";
 import { gradeFilter, type Transition } from "@/lib/edit/styles";
 
@@ -85,12 +86,12 @@ export function compileEdl(edl: EditDecisionList, context: CompileContext): stri
   edl.segments.forEach((segment) => {
     const path = context.sourcePaths[segment.source];
     if (!path) throw new Error("Edit references a missing source.");
-    args.push("-ss", num(segment.start), "-t", num(sourceSeconds(segment) + 0.1), "-i", path); inputs++;
+    args.push("-ss", num(segment.start), "-t", num(sourceSeconds(segment) + 0.1), ...MEDIA_INPUT_OPTIONS, "-i", path); inputs++;
   });
   const brollInputs = edl.composition === "broll" ? edl.broll.map((piece) => {
     const path = context.sourcePaths[piece.source];
     if (!path) throw new Error("B-roll references a missing source.");
-    args.push("-ss", num(piece.start), "-t", num(piece.duration + 0.1), "-i", path);
+    args.push("-ss", num(piece.start), "-t", num(piece.duration + 0.1), ...MEDIA_INPUT_OPTIONS, "-i", path);
     return inputs++;
   }) : [];
   const music = edl.audio.mode === "soundtrack" || edl.audio.mode === "mix";
