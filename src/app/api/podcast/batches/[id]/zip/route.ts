@@ -1,5 +1,5 @@
 import { assertSessionId } from "@/lib/storage/session-storage";
-import { errorResponse, HttpError, requireSession } from "@/lib/server/security";
+import { errorResponse, HttpError, networkKey, rateLimit, requireSession } from "@/lib/server/security";
 import { batchView, reelFile } from "@/lib/podcast/batch";
 import { zipStream } from "@/lib/podcast/zip";
 import { countSafely } from "@/lib/festival/metrics";
@@ -11,6 +11,8 @@ export const runtime = "nodejs";
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     await requirePodcastMode();
+    // ZIP preparation reads each rendered file to calculate a CRC before streaming it.
+    rateLimit(`batch-zip:${networkKey(request)}`, 6);
     const sessionId = assertSessionId(new URL(request.url).searchParams.get("sessionId") || "");
     await requireSession(request, sessionId);
     const id = (await context.params).id;
